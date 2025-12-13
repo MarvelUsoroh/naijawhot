@@ -126,18 +126,25 @@ export function WhotGame() {
     // Check if player won
     if (newPlayerHand.length === 0) {
       setWinner('player');
-      setMessage('🎉 You won! Congratulations!');
+      setMessage('🎉 Checkup! You won! Congratulations!');
       setGameStarted(false);
       return;
     }
 
+    let warningMsg = '';
+    if (newPlayerHand.length === 1) {
+        warningMsg = ' You are on your last card!';
+    } else if (newPlayerHand.length === 2) {
+        warningMsg = ' Warning, you have two cards left!';
+    }
+
     // Handle special cards
     if (card.number === WHOT) {
-      setMessage('Choose a shape for the next player!');
+      setMessage('Choose a shape for the next player!' + warningMsg);
       return; // Wait for shape selection
     } else if (card.number === PICK_TWO) {
       setPendingAction({ type: 'pick', count: 2 });
-      setMessage('Computer must pick 2 cards!');
+      setMessage('Computer must pick 2 cards!' + warningMsg);
       setTimeout(() => {
         drawCards(2, false);
         setPendingAction(null);
@@ -146,7 +153,7 @@ export function WhotGame() {
       return;
     } else if (card.number === PICK_THREE) {
       setPendingAction({ type: 'pick', count: 3 });
-      setMessage('Computer must pick 3 cards!');
+      setMessage('Computer must pick 3 cards!' + warningMsg);
       setTimeout(() => {
         drawCards(3, false);
         setPendingAction(null);
@@ -154,10 +161,10 @@ export function WhotGame() {
       }, 1500);
       return;
     } else if (card.number === HOLD_ON) {
-      setMessage('Computer is held! Your turn again!');
+      setMessage('Computer is held! Your turn again!' + warningMsg);
       return;
     } else if (card.number === GENERAL_MARKET) {
-      setMessage('General Market! Everyone picks a card!');
+      setMessage('General Market Everyone!' + warningMsg);
       setTimeout(() => {
         drawCards(1, true);
         drawCards(1, false);
@@ -170,7 +177,7 @@ export function WhotGame() {
 
     // Normal card - switch turn
     setIsPlayerTurn(false);
-    setMessage("Computer's turn...");
+    setMessage("Computer's turn..." + warningMsg);
     setTimeout(computerPlay, 1000);
   };
 
@@ -221,7 +228,7 @@ export function WhotGame() {
         setMessage('You are held! Computer plays again...');
         setTimeout(computerPlay, 1000);
       } else if (cardToPlay.number === GENERAL_MARKET) {
-        setMessage('General Market! Everyone picks a card!');
+        setMessage('General Market Everyone!');
         setTimeout(() => {
           drawCards(1, true);
           drawCards(1, false);

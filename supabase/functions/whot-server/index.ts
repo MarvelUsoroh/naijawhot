@@ -230,8 +230,11 @@ app.post("*/game/play-card", async (c) => {
         updatedState.lastAction += " (Opponents drew 1)";
     }
 
-    // Check Winner
-    if (updatedState.playerHands[playerId].length === 0) {
+    // Check Card Counts & Winner
+    const remainingCards = updatedState.playerHands[playerId].length;
+    const playerName = updatedState.players[playerIndex].name;
+
+    if (remainingCards === 0) {
       updatedState.winner = playerId;
       
       // Calculate Scores
@@ -240,8 +243,14 @@ app.post("*/game/play-card", async (c) => {
           return `${p.name}: ${score}`;
       }).join(', ');
       
-      updatedState.lastAction = `${updatedState.players[playerIndex].name} Wins! Final Scores: ${scores}`;
+      updatedState.lastAction = `${playerName} - Checkup! Final Scores: ${scores}`;
       updatedState.gameStarted = false;
+    } else if (remainingCards === 1) {
+        // Last Card Warning
+        updatedState.lastAction += `. ${playerName} is on last card!`;
+    } else if (remainingCards === 2) {
+        // Two Cards Warning
+        updatedState.lastAction += `. Warning, ${playerName} has two cards left!`;
     }
 
     // Parallelize Save and Broadcast for lower latency

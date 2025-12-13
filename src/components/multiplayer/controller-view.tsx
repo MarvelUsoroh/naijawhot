@@ -66,6 +66,20 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     }
   }, [gameState?.gameStarted, isJoined]);
 
+  // Auto-Reconnect Logic
+  useEffect(() => {
+    if (gameState?.gameStarted && !isJoined && playerId) {
+        // Check if we are already in the game
+        const myPlayer = gameState.players.find(p => p.id === playerId);
+        if (myPlayer) {
+            console.log("Found existing session, auto-reconnecting...");
+            setPlayerName(myPlayer.name);
+            setIsJoined(true);
+            setMessage('Welcome back!');
+        }
+    }
+  }, [gameState, isJoined, playerId]);
+
   const fetchHand = async () => {
       try {
           const cards = await getHand(roomCode, playerId);
@@ -103,28 +117,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         if (gameState.effectActive === 'pick_two' || gameState.effectActive === 'pick_three') {
             isValid = canDefendAgainstPick(card, gameState);
         } else {
-            isValid = canPlayCard(card, gameState.currentCard, gameState.currentCard.number === 20 ? (gameState.currentCard.shape as CardShape) : null);
-            // Wait, the `canPlayCard` signature expects `selectedShape`. 
-            // If the current card is Whot, we need to know the declared shape.
-            // The `gameState.currentCard` might not carry the declared shape property directly if it's just a Card object.
-            // Actually `gameState` usually tracks `currentShape` or similar if Whot was played?
-            // `whot-rules.ts` `canPlayCard` uses `selectedShape`.
-            // Let's assume for now, standard matching.
-            
-            // Correction: `canPlayCard` takes `(card, currentCard, selectedShape)`. 
-            // We don't have easy access to "active requested shape" from `gameState` in this minimal interface?
-            // `gameState.currentCard` is the top card. 
-            // If previous player played Whot, `gameState.lastAction` might say "Circle", but verifying strict logic here might be tricky without full state.
-            // However, Basic matching (Shape/Number) is safe to check.
-            
-            // Simpler check:
-            if (card.number === 20) isValid = true;
-            else if (card.shape === gameState.currentCard.shape) isValid = true;
-            else if (card.number === gameState.currentCard.number) isValid = true;
-            
-            // Special case: If prev card was 20, we need to respect the called shape.
-            // If we can't be 100% sure of the called shape here, we should perhaps skip strict validation or infer it.
-            // But blocking obvious mismatches is good.
+            // Correctly pass the globally selected shape (from previous Whot play)
+            isValid = canPlayCard(card, gameState.currentCard, gameState.selectedShape);
         }
 
         if (!isValid) {
