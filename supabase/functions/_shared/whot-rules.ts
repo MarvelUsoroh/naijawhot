@@ -143,20 +143,19 @@ export function mustDrawCards(state: GameState, playerId: string): number {
 }
 
 export function canDefendAgainstPick(card: Card, state: GameState): boolean {
-  if (state.effectActive === 'pick_two' && card.number === 2) {
-    return true;
-  }
-  if (state.effectActive === 'pick_three' && card.number === 5) {
-    return true;
-  }
+  // STRICT RULE CHANGE: No Defense allowed.
+  // Victim must always go to market.
   return false;
 }
 
 export function getPlayableCards(hand: Card[], currentCard: Card, selectedShape: CardShape | null, state: GameState): Card[] {
+  // If Pick Two/Three is active against you, you CANNOT play any card.
+  // You MUST draw.
+  if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
+     return [];
+  }
+
   return hand.filter(card => {
-    if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
-      return canDefendAgainstPick(card, state); // Strictly enforce defense (only 2s or 5s)
-    }
     return canPlayCard(card, currentCard, selectedShape);
   });
 }
@@ -196,6 +195,12 @@ export function applyCardEffect(
        if (card.shape === 'star') {
            skipCount = 2;
            newState.lastAction = `${state.players[playerIndex].name} played STAR 8 (Suspension x2)!`;
+       }
+       
+       // SPECIAL RULE: If 2 players, Star 8 (Skip 2) would wrap around and land on Opponent.
+       // We want it to behave like Skip 1 (Land on Self).
+       if (state.players.length === 2 && skipCount > 1) {
+           skipCount = 1;
        }
 
        // Skip players

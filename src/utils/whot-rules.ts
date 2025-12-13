@@ -154,7 +154,23 @@ export function applyCardEffect(
       break;
 
     case 'suspension':
-      const skips = card.shape === 'star' ? 2 : 1;
+      let skips = card.shape === 'star' ? 2 : 1;
+      // Special Rule for 2 Players: Star 8 should only skip the opponent (1 skip), 
+      // otherwise it lands back on the opponent (Skip 2 = Self + Opponent? No, Skip 0=Next, Skip 1=Next+1).
+      // actually:
+      // Index + 1 = Next Player (Normal Turn)
+      // Index + 1 + 1 (Skip 1) = Skips Next Player.
+      // Index + 1 + 2 (Skip 2) = Skips Next 2 Players.
+
+      // If 2 players:
+      // P1 plays. 
+      // Normal 8 (Skip 1): Skips P2. Turn back to P1.
+      // Star 8 (Skip 2): Skips P2, Skips P1. Turn back to P2. <--- User wants to avoid this.
+      // User wants: Star 8 in 2-player mode to just skip opponent.
+      if (state.players.length === 2 && skips > 1) {
+          skips = 1; 
+      }
+
       newState.lastAction = `${state.players[playerIndex].name} played SUSPENSION! Next ${skips} player${skips > 1 ? 's' : ''} skip turn`;
       // Skip the appropriate number of players
       newState.currentPlayerIndex = state.currentPlayerIndex;
@@ -241,12 +257,7 @@ export function mustDrawCards(state: GameState, playerId: string): number {
  * Check if player can defend against Pick Two/Three with their own
  */
 export function canDefendAgainstPick(card: Card, state: GameState): boolean {
-  if (state.effectActive === 'pick_two' && card.number === 2) {
-    return true;
-  }
-  if (state.effectActive === 'pick_three' && card.number === 5) {
-    return true;
-  }
+  // STRICT RULE CHANGE: No Defense allowed. 
   return false;
 }
 
@@ -254,12 +265,13 @@ export function canDefendAgainstPick(card: Card, state: GameState): boolean {
  * Get playable cards from hand
  */
 export function getPlayableCards(hand: Card[], currentCard: Card, selectedShape: CardShape | null, state: GameState): Card[] {
+  // If Pick Two/Three is active against you, you CANNOT play any card.
+  // You MUST draw.
+  if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
+     return [];
+  }
+
   return hand.filter(card => {
-    // If there's a Pick Two/Three effect, can only play the same number or draw
-    if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
-      return canDefendAgainstPick(card, state); // Strictly enforce defense (only 2s or 5s)
-    }
-    
     return canPlayCard(card, currentCard, selectedShape);
   });
 }

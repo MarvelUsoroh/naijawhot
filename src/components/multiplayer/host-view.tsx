@@ -94,9 +94,9 @@ export function HostView({ onExit }: HostViewProps) {
       <div className="relative z-10 flex items-center justify-between px-8 py-4 bg-gradient-to-b from-black/60 to-transparent">
         <div className="flex items-center gap-6">
             <div className="flex flex-col">
-                <span className="text-yellow-400 text-xs uppercase tracking-widest font-bold opacity-80">Room Code</span>
+                <span className="text-yellow-400 text-[10px] md:text-xs uppercase tracking-widest font-bold opacity-80">Room Code</span>
                 <div className="flex items-center gap-3">
-                    <span className="text-5xl font-black text-white tracking-wider font-mono drop-shadow-md">{localRoomCode}</span>
+                    <span className="text-3xl md:text-5xl font-black text-white tracking-wider font-mono drop-shadow-md">{localRoomCode}</span>
                     <button onClick={copyCode} className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all">
                         <Copy className="w-5 h-5"/>
                     </button>
@@ -107,7 +107,7 @@ export function HostView({ onExit }: HostViewProps) {
             </div>
         </div>
 
-        {/* Unified Message Banner */}
+        {/* Unified Message Banner - HOST SEES ALL */}
         <div className="absolute left-1/2 -translate-x-1/2 top-24 pointer-events-none z-50">
              {gameState?.currentCard && [1, 2, 5, 8, 14, 20].includes(gameState.currentCard.number) ? (
                  <div className="bg-red-600/90 px-8 py-3 rounded-full border border-red-400/50 shadow-[0_0_20px_rgba(220,38,38,0.5)] animate-bounce flex flex-col items-center">
@@ -180,14 +180,14 @@ export function HostView({ onExit }: HostViewProps) {
           )}
 
           {/* Lobby View (Pre-game) */}
-          {!gameState?.gameStarted && !winner && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
-                  <div className="bg-black/30 backdrop-blur-md p-12 rounded-3xl border border-white/10 shadow-2xl text-center max-w-2xl w-full">
-                      <Crown className="w-16 h-16 text-yellow-400 mx-auto mb-6" />
-                      <h2 className="text-4xl font-black text-white mb-2">Ready to Play?</h2>
-                      <p className="text-white/60 text-lg mb-8">Waiting for players to join room {localRoomCode}</p>
+           {!gameState?.gameStarted && !winner && (
+               <div className="absolute inset-0 flex flex-col items-center justify-center z-20 overflow-y-auto p-4">
+                   <div className="bg-black/30 backdrop-blur-md p-6 md:p-12 rounded-3xl border border-white/10 shadow-2xl text-center max-w-2xl w-full my-auto">
+                       <Crown className="w-12 h-12 md:w-16 md:h-16 text-yellow-400 mx-auto mb-4 md:mb-6" />
+                       <h2 className="text-3xl md:text-4xl font-black text-white mb-2">Ready to Play?</h2>
+                       <p className="text-white/60 text-lg mb-6 md:mb-8">Waiting for players to join room {localRoomCode}</p>
 
-                      <div className="grid grid-cols-2 gap-4 mb-8">
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
                           {players.map(p => (
                               <div key={p.id} className="bg-white/10 px-6 py-4 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4">
                                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-black font-bold">
@@ -210,9 +210,9 @@ export function HostView({ onExit }: HostViewProps) {
                       >
                           START MATCH
                       </button>
-                  </div>
-              </div>
-          )}
+                   </div>
+               </div>
+           )}
 
           {/* Active Game Layout */}
           {gameState?.gameStarted && !winner && (

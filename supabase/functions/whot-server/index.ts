@@ -177,15 +177,19 @@ app.post("*/game/play-card", async (c) => {
         return c.json({ error: "Card not in hand" }, 400);
     }
 
-    // Validate Move Rules
-    if (!canPlayCard(card, state.currentCard!, state.selectedShape)) {
-      // Check for Pick defences
-      if (state.effectActive && !canDefendAgainstPick(card, state)) {
-         return c.json({ error: "Invalid move" }, 400);
-      }
-      if (!state.effectActive) {
-          return c.json({ error: "Invalid move" }, 400);
-      }
+    // Validate Move Rules strictly
+    const isValid = canPlayCard(card, state.currentCard!, state.selectedShape);
+    
+    // Check for Effect Restrictions (Pick Two/Three CANNOT be defended anymore)
+    if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
+       // If Pick Effect is active, player MUST draw. They cannot play ANY card.
+       // The exception is handled by the 'draw' endpoint.
+       // So if they try to play a card here, it's ILLEGAL immediately.
+       return c.json({ error: "Must draw cards (Market Penalties active)" }, 400);
+    }
+
+    if (!isValid) {
+      return c.json({ error: "Invalid move: Card does not match shape or number" }, 400);
     }
 
     // Everything OK - Apply Move

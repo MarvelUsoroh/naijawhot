@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Tv, Smartphone, Sparkles, Crown } from 'lucide-react';
+import { Tv, Smartphone, Sparkles, Crown, ArrowLeft } from 'lucide-react';
 import { generateRoomCode } from '../utils/game-helpers';
 
 interface HomeProps {
@@ -24,7 +24,7 @@ export function Home({ onHostGame, onJoinGame }: HomeProps) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
+    <div className="min-h-[100dvh] overflow-y-auto flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
       
       {/* Hero Section */}
       <div className="mb-12 max-w-3xl">
@@ -85,24 +85,34 @@ export function Home({ onHostGame, onJoinGame }: HomeProps) {
               Enter Code
             </button>
           ) : (
-            <form onSubmit={handleJoinSubmit} className="flex gap-2">
-              <input
-                type="text"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value)}
-                placeholder="1234"
-                maxLength={4}
-                autoFocus
-                className="flex-1 bg-black/40 border-2 border-green-500/50 rounded-xl px-4 text-center text-xl font-mono font-bold text-white focus:outline-none focus:border-green-500 placeholder-white/20"
-              />
-              <button
-                type="submit"
-                disabled={joinCode.length !== 4}
-                className="px-6 bg-green-500 hover:bg-green-400 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:grayscale"
-              >
-                GO
-              </button>
-            </form>
+            <div className="flex items-center gap-2 w-full">
+               <button
+                  type="button"
+                  onClick={() => setShowJoinInput(false)}
+                  className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all"
+               >
+                  <ArrowLeft className="w-6 h-6" />
+               </button>
+               <form onSubmit={handleJoinSubmit} className="flex-1 flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  placeholder="1234"
+                  maxLength={4}
+                  autoFocus
+                  className="w-full sm:flex-1 bg-black/40 border-2 border-green-500/50 rounded-xl px-4 py-3 text-center text-xl font-mono font-bold text-white focus:outline-none focus:border-green-500 placeholder-white/20 uppercase tracking-widest"
+                />
+                <button
+                  type="submit"
+                  disabled={joinCode.length !== 4}
+                  className="w-full sm:w-auto px-6 py-3 bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-400 text-white font-bold text-lg rounded-xl transition-all shadow-lg hover:shadow-green-500/20 whitespace-nowrap"
+                >
+                  Join
+                </button>
+              </form>
+            </div>
+
           )}
         </div>
       </div>

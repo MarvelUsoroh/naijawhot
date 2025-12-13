@@ -4,7 +4,11 @@ import { getPlayableCards, canDefendAgainstPick, canPlayCard } from '../../utils
 import { useGameConnection } from '../../utils/useGameConnection';
 import { Card, CardShape } from '../../types/game';
 import { WhotCard } from '../card';
-import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab } from 'lucide-react';
+// Note: Cross is not standard in Lucide, usually X or Plus. But Card.tsx uses Cross? 
+// Let's check Card.tsx again. It imports Cross. 
+// If Cross works there, I should import it here.
+import { Cross } from 'lucide-react';
 
 interface ControllerViewProps {
   roomCode: string;
@@ -181,7 +185,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   if (!isJoined) {
     return (
       <div 
-        className="min-h-screen flex flex-col items-center justify-center p-6 text-white bg-cover bg-center font-sans"
+        className="relative min-h-screen flex flex-col items-center justify-center p-6 text-white bg-cover bg-center font-sans overflow-hidden"
         style={{ 
              background: 'var(--whot-table-gradient)',
          }}
@@ -191,9 +195,9 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
            
         <button
           onClick={onBack}
-          className="relative z-10 absolute top-4 left-4 px-4 py-2 bg-black/40 hover:bg-black/60 backdrop-blur rounded-lg transition-all flex items-center gap-2 border border-white/10"
+          className="absolute top-4 left-4 z-50 px-4 py-2 bg-black/40 hover:bg-black/60 backdrop-blur rounded-lg transition-all flex items-center gap-2 border border-white/10 text-sm font-bold shadow-lg"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4" />
           Back
         </button>
 
@@ -283,65 +287,158 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
 
        {/* Cards Area */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-4 overflow-hidden">
+         {/* Table Visuals (Market + Current Card) */}
+         {!cardsHidden && (
+                <div className="relative z-20">
+                    {/* Current Card on Table */}
+                    {gameState?.currentCard && (
+                        <div className="transform scale-125 shadow-2xl border-4 border-white/10 rounded-xl">
+                             <WhotCard card={gameState.currentCard} />
+                        </div>
+                    )}
+                     <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-white/50 text-[10px] font-bold uppercase tracking-widest whitespace-nowrap mt-2">
+                         Table
+                     </div>
+                </div>
+         )}
          
          {/* Shape Picker Modal */}
          {showShapePicker && pendingCard && (
              <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
                  <h3 className="text-white text-2xl mb-8 font-black uppercase tracking-wider">Choose a Shape</h3>
                  <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
-                     {(['circle', 'triangle', 'cross', 'square', 'star'] as CardShape[]).map(shape => (
-                         <button
-                           key={shape}
-                           onClick={() => handlePlayCard(pendingCard, shape)}
-                           className="bg-white/10 border-2 border-white/20 text-white px-6 py-6 rounded-2xl capitalize font-bold hover:bg-yellow-400 hover:text-black hover:border-yellow-400 hover:scale-105 transition-all text-lg flex items-center justify-center gap-2"
-                         >
-                             {shape}
-                         </button>
-                     ))}
+                     {(['circle', 'triangle', 'cross', 'square', 'star'] as CardShape[]).map(shape => {
+                         const getIcon = () => {
+                             const props = { className: "w-8 h-8", strokeWidth: 3 };
+                             switch(shape) {
+                                 case 'circle': return <Circle {...props} />;
+                                 case 'triangle': return <Triangle {...props} />;
+                                 case 'cross': return <Cross {...props} />;
+                                 case 'square': return <Square {...props} />;
+                                 case 'star': return <Star {...props} />;
+                             }
+                         };
+                         
+                         const getColor = () => {
+                             switch(shape) {
+                                 case 'circle': return "text-red-500 border-red-500/50 hover:bg-red-500";
+                                 case 'triangle': return "text-green-500 border-green-500/50 hover:bg-green-500";
+                                 case 'cross': return "text-purple-500 border-purple-500/50 hover:bg-purple-500";
+                                 case 'square': return "text-blue-500 border-blue-500/50 hover:bg-blue-500";
+                                 case 'star': return "text-yellow-500 border-yellow-500/50 hover:bg-yellow-500";
+                             }
+                         };
+
+                         return (
+                           <button
+                               key={shape}
+                               onClick={() => handlePlayCard(pendingCard, shape)}
+                               className={`bg-white/5 border-2 ${getColor()} hover:text-white px-6 py-6 rounded-2xl capitalize font-bold hover:scale-105 transition-all text-lg flex flex-col items-center justify-center gap-2 group backdrop-blur-sm shadow-xl`}
+                           >
+                               <div className="group-hover:scale-110 transition-transform duration-200">{getIcon()}</div>
+                               <span className="text-sm tracking-wider opacity-80 group-hover:opacity-100">{shape}</span>
+                           </button>
+                         );
+                     })}
                  </div>
                  <button onClick={() => setShowShapePicker(false)} className="mt-12 text-white/50 text-sm font-bold uppercase tracking-widest hover:text-white">Cancel Choice</button>
              </div>
          )}
 
-         {/* Unified Action Banner */}
-         {gameState?.currentCard && [1, 2, 5, 8, 14, 20].includes(gameState.currentCard.number) && (
-             <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-red-600/90 px-6 py-2 rounded-full border border-red-400/50 backdrop-blur-sm z-50 whitespace-nowrap shadow-xl animate-pulse">
-                 <p className="text-white font-black uppercase tracking-wider text-sm">
-                     {gameState.currentCard.number === 14 ? "GO TO MARKET!" : 
-                      gameState.currentCard.number === 2 ? "PICK TWO!" :
-                      gameState.currentCard.number === 5 ? "PICK THREE!" :
-                      gameState.currentCard.number === 1 ? "HOLD ON!" :
-                      gameState.currentCard.number === 8 ? "SUSPENSION!" : 
-                      gameState.currentCard.number === 20 ? `I NEED ${gameState.selectedShape?.toUpperCase() || "A SHAPE"}!` : ""}
-                 </p>
-             </div>
-         )}
+         {/* Unified Action Banner - SMART & TARGETED */}
+         {(() => {
+             if (!gameState?.currentCard) return null;
+             const num = gameState.currentCard.number;
+             
+             // Logic to decide if WE are the target
+             let showBanner = false;
+             let message = "";
 
-        {cardsHidden ? (
-          <div className="text-center animate-pulse opacity-50">
-            <Layers className="w-24 h-24 text-white mx-auto mb-4" />
-            <p className="text-white text-lg font-bold uppercase tracking-widest">Hand Hidden</p>
-          </div>
-        ) : hand.length > 0 ? (
+             if (num === 20) {
+                 showBanner = true; // Always show Whot requirement
+                 message = `I NEED ${gameState.selectedShape?.toUpperCase() || "A SHAPE"}!`;
+             } else if (num === 14) {
+                 // ONLY if we are in the due list
+                 if (gameState.marketDue?.includes(playerId)) {
+                     showBanner = true;
+                     message = "GO TO MARKET!";
+                 }
+             } else if (num === 2) {
+                 // ONLY if it's our turn AND effect is active
+                 if (isMyTurn && gameState.effectActive === 'pick_two') {
+                     showBanner = true;
+                     message = "PICK TWO!";
+                 }
+             } else if (num === 5) {
+                 if (isMyTurn && gameState.effectActive === 'pick_three') {
+                     showBanner = true;
+                     message = "PICK THREE!";
+                 }
+             } else if (num === 1 && isMyTurn) {
+                 showBanner = true;
+                 message = "HOLD ON! Play Again";
+             } else if (num === 8 && gameState.lastAction.includes('SUSPENSION')) {
+                 // Suspension is tricky, usually not targeted at 'current' player but the one skipped.
+                 // Just show generic if it's the top card?
+                 // Let's hide it to reduce noise, or show only if we were just skipped? Hard to track.
+                 // Simplest: Hide unless specifically needed.
+             }
+
+             if (!showBanner) return null;
+
+             return (
+                 <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-red-600/90 px-6 py-2 rounded-full border border-red-400/50 backdrop-blur-sm z-50 whitespace-nowrap shadow-xl animate-pulse">
+                     <p className="text-white font-black uppercase tracking-wider text-sm">
+                         {message}
+                     </p>
+                 </div>
+             );
+         })()}
+
+        {hand.length > 0 ? (
           <div className="w-full h-full flex items-center overflow-x-auto snap-x px-8 pb-4 scrollbar-hide">
             <div className="flex gap-4 items-center mx-auto min-w-min">
-                {/* Draw Button */}
-                <button
-                  onClick={handleDraw}
-                  disabled={!isMyTurn || loading}
-                  className={`flex-shrink-0 w-28 h-40 rounded-xl border-4 border-dashed border-white/20 flex flex-col items-center justify-center transition-all ${isMyTurn ? 'hover:bg-white/5 hover:border-yellow-400/50 active:scale-95 cursor-pointer' : 'opacity-30 cursor-not-allowed'}`}
-                >
-                  <RefreshCw className={`w-8 h-8 text-white mb-2 ${loading ? 'animate-spin' : ''}`} />
-                  <span className="text-white/60 text-xs font-bold uppercase tracking-wider">Draw</span>
-                </button>
+                {/* Market Pile (Draw Button) */}
+                <div className="relative flex-shrink-0 flex flex-col items-center gap-2">
+                    <button
+                      onClick={handleDraw}
+                      disabled={!isMyTurn || loading}
+                      className={`relative w-28 h-40 rounded-xl flex flex-col items-center justify-center transition-all group ${isMyTurn ? 'cursor-pointer hover:scale-105 active:scale-95' : 'opacity-50 cursor-not-allowed'}`}
+                    >
+                       {/* Deck Visuals matching Host View */}
+                       {/* Stack effect */}
+                       <div className="absolute top-1 left-1 w-full h-full bg-red-950 rounded-xl border border-white/10 rotate-3 shadow-lg -z-20 transition-transform group-hover:rotate-6"/>
+                       <div className="absolute top-0.5 left-0.5 w-full h-full bg-red-900 rounded-xl border border-white/10 rotate-1 shadow-lg -z-10 transition-transform group-hover:rotate-3"/>
+                       
+                       <WhotCard 
+                           card={{ id: 'deck', shape: 'circle', number: 20 }} 
+                           faceDown 
+                           className="w-full h-full shadow-2xl z-10"
+                       />
+
+                       {/* Deck Count Badge */}
+                       <div className="absolute top-2 right-2 w-6 h-6 bg-black/60 backdrop-blur rounded-full flex items-center justify-center border border-white/20 z-20 shadow-md">
+                           <span className="text-white text-[10px] font-bold">{gameState?.deckCount || 0}</span>
+                       </div>
+
+                       {/* Loading Spinner Overlay */}
+                       {loading && (
+                           <div className="absolute inset-0 flex items-center justify-center z-30 bg-black/20 rounded-xl backdrop-blur-sm">
+                               <RefreshCw className="w-8 h-8 text-white animate-spin" />
+                           </div>
+                       )}
+                    </button>
+                    <span className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Market</span>
+                </div>
 
                 {hand.map((card) => (
                     <div key={card.id} className="flex-shrink-0 snap-center perspective-1000">
                       <WhotCard
                         card={card}
-                        onClick={() => handlePlayCard(card)}
-                        disabled={!isMyTurn || loading}
-                        className={`transform transition-all ${isMyTurn ? 'hover:scale-110 hover:-translate-y-6 hover:rotate-2 shadow-2xl cursor-pointer' : 'opacity-80 scale-95 grayscale-[0.3] cursor-not-allowed'}`}
+                        faceDown={cardsHidden}
+                        onClick={() => !cardsHidden && handlePlayCard(card)}
+                        disabled={!isMyTurn || loading || cardsHidden}
+                        className={`transform transition-all duration-500 ${isMyTurn && !cardsHidden ? 'hover:scale-110 hover:-translate-y-6 hover:rotate-2 shadow-2xl cursor-pointer' : ''} ${cardsHidden ? 'opacity-90 grayscale-[0.2]' : ''}`}
                       />
                     </div>
                 ))}
