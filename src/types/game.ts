@@ -42,7 +42,7 @@ export interface GameState {
 }
 
 export interface GameMessage {
-  type: 'player_joined' | 'player_left' | 'card_played' | 'game_started' | 'shape_selected' | 'turn_changed' | 'cards_drawn' | 'special_effect' | 'deal' | 'state_sync' | 'join' | 'play' | 'draw';
+  type: 'player_joined' | 'player_left' | 'card_played' | 'game_started' | 'shape_selected' | 'turn_changed' | 'cards_drawn' | 'special_effect' | 'deal' | 'state_sync' | 'join' | 'play' | 'draw' | 'chat_message' | 'activate_chat' | 'toggle_chat';
   playerId: string;
   playerName?: string;
   card?: Card;
@@ -52,5 +52,6 @@ export interface GameMessage {
   shape?: CardShape;
   cardsDrawn?: number;
   effect?: string;
-  timestamp: number;
+  message?: string; // For chat messages
+  timestamp?: number; // Auto-added by sendMessage
 }

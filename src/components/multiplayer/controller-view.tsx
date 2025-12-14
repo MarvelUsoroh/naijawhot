@@ -4,7 +4,7 @@ import { getPlayableCards, canDefendAgainstPick, canPlayCard } from '../../utils
 import { useGameConnection } from '../../utils/useGameConnection';
 import { Card, CardShape } from '../../types/game';
 import { WhotCard } from '../card';
-import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, X as Cross, Trophy } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, X as Cross, Trophy, MessageCircle } from 'lucide-react';
 import { WinnerOverlay } from './winner-overlay';
 
 interface ControllerViewProps {
@@ -44,7 +44,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     drawCard: drawCardOnServer,
     getHand,
     setReady,
-    fetchGameState
+    fetchGameState,
+    sendMessage
   } = useGameConnection(roomCode, handleMessage);
 
   const [playerName, setPlayerName] = useState('');
@@ -57,6 +58,10 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   // Shape Selection Modal State
   const [showShapePicker, setShowShapePicker] = useState(false);
   const [pendingCard, setPendingCard] = useState<Card | null>(null);
+
+  // Chat State
+  const [chatInput, setChatInput] = useState('');
+  const [isChatFocused, setIsChatFocused] = useState(false);
 
   // Fetch current game state on mount (for reconnection)
   useEffect(() => {
@@ -159,8 +164,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         setPendingCard(null);
         setShowShapePicker(false);
         setMessage("Card played!");
-        // Confirm state from server
-        await fetchHand();
+        // Confirm state from server (non-blocking - don't await)
+        fetchHand();
     } catch (err: any) {
         console.error("Play error", err);
         setMessage(`Error: ${err.message}`);
@@ -348,11 +353,11 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
          {/* Shape Picker Modal */}
          {showShapePicker && pendingCard && (
              <div className="absolute inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
-                 <h3 className="text-white text-2xl mb-8 font-black uppercase tracking-wider">Choose a Shape</h3>
-                 <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
+                 <h3 className="text-white text-xl md:text-3xl mb-6 md:mb-10 font-black uppercase tracking-wider">Choose a Shape</h3>
+                 <div className="grid grid-cols-2 gap-3 md:gap-6 w-full max-w-sm md:max-w-xl">
                      {(['circle', 'triangle', 'cross', 'square', 'star'] as CardShape[]).map(shape => {
                          const getIcon = () => {
-                             const props = { className: "w-8 h-8", strokeWidth: 3 };
+                             const props = { className: "w-8 h-8 md:w-12 md:h-12", strokeWidth: 3 };
                              switch(shape) {
                                  case 'circle': return <Circle {...props} />;
                                  case 'triangle': return <Triangle {...props} />;
@@ -376,7 +381,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
                            <button
                                key={shape}
                                onClick={() => handlePlayCard(pendingCard, shape)}
-                               className={`bg-white/5 border-2 ${getColor()} hover:text-white px-6 py-6 rounded-2xl capitalize font-bold hover:scale-105 transition-all text-lg flex flex-col items-center justify-center gap-2 group backdrop-blur-sm shadow-xl`}
+                               className={`bg-white/5 border-2 ${getColor()} hover:text-white px-4 py-4 md:px-8 md:py-8 rounded-2xl capitalize font-bold hover:scale-105 transition-all text-base md:text-xl flex flex-col items-center justify-center gap-2 md:gap-3 group backdrop-blur-sm shadow-xl`}
                            >
                                <div className="group-hover:scale-110 transition-transform duration-200">{getIcon()}</div>
                                <span className="text-sm tracking-wider opacity-80 group-hover:opacity-100">{shape}</span>
@@ -508,9 +513,72 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         )}
       </div>
 
-       {/* Footer */}
-      <div className="relative z-20 px-6 py-4 bg-black/40 backdrop-blur-md border-t border-white/5 text-center">
-        <p className="text-white/40 text-xs font-mono tracking-widest uppercase">
+       {/* Footer with Chat Input */}
+      <div className="relative z-20 px-4 py-3 bg-black/40 backdrop-blur-md border-t border-white/5">
+        {/* Only show chat when game has started */}
+        {gameState?.gameStarted && (
+          <div className="flex items-center gap-2 mb-2">
+            {/* Chat Input */}
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onFocus={(e) => {
+                setIsChatFocused(true);
+                // Scroll input into view when keyboard appears
+                setTimeout(() => {
+                  e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+              }}
+              onBlur={() => setIsChatFocused(false)}
+              placeholder="Send a message..."
+              className="flex-1 px-4 py-3 md:py-2 bg-black/30 border border-white/10 rounded-full text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/30"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && chatInput.trim()) {
+                  sendMessage({
+                    type: 'chat_message',
+                    playerId,
+                    playerName: playerName || 'Player',
+                    message: chatInput.trim()
+                  });
+                  setChatInput('');
+                }
+              }}
+            />
+            
+            {/* Two-State Button: Chat icon or Send icon */}
+            <button
+              onClick={() => {
+                if (chatInput.trim()) {
+                  // Send message
+                  sendMessage({
+                    type: 'chat_message',
+                    playerId,
+                    playerName: playerName || 'Player',
+                    message: chatInput.trim()
+                  });
+                  setChatInput('');
+                } else {
+                  // Toggle chat on host
+                  sendMessage({
+                    type: 'toggle_chat',
+                    playerId
+                  });
+                }
+              }}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
+                chatInput.trim() 
+                  ? 'bg-yellow-500 text-black hover:bg-yellow-400' 
+                  : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
+              }`}
+            >
+              {chatInput.trim() ? <Send className="w-4 h-4" /> : <MessageCircle className="w-4 h-4" />}
+            </button>
+          </div>
+        )}
+        
+        {/* Card Count */}
+        <p className="text-white/40 text-xs font-mono tracking-widest uppercase text-center">
            {hand.length} Cards held
         </p>
       </div>

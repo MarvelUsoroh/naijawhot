@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useGameConnection } from '../../utils/useGameConnection';
 import { WhotCard } from '../card';
-import { QrCode, Copy, Trophy, Crown, AlertCircle } from 'lucide-react';
+import { QrCode, Copy, Trophy, Crown, AlertCircle, X, MessageCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WinnerOverlay } from './winner-overlay';
 
@@ -24,6 +24,20 @@ export function HostView({ onExit }: HostViewProps) {
               return [...prev, { id: msg.playerId, name: msg.playerName }];
           });
       }
+      // Chat messages
+      if (msg.type === 'toggle_chat') {
+          setShowChat(prev => !prev); // Toggle instead of just opening
+      }
+      if (msg.type === 'activate_chat') {
+          setShowChat(true);
+      }
+      if (msg.type === 'chat_message') {
+          setShowChat(true);
+          setChatMessages(prev => [
+              ...prev,
+              { playerName: msg.playerName, message: msg.message, timestamp: Date.now() }
+          ].slice(-20)); // Keep last 20 messages
+      }
   }, []);
 
   const { 
@@ -35,6 +49,10 @@ export function HostView({ onExit }: HostViewProps) {
 
   const [message, setMessage] = useState('Waiting for players...');
   const [showQR, setShowQR] = useState(false);
+  
+  // Chat State
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{playerName: string; message: string; timestamp: number}[]>([]);
   
   // Game state derived - Merge local lobby players with server game players
   const players = gameState?.players || localPlayers;
@@ -315,6 +333,48 @@ export function HostView({ onExit }: HostViewProps) {
             </>
           )}
 
+      </div>
+      
+      {/* Chat Panel (slides in from right) */}
+      <div className={`fixed right-0 top-0 bottom-0 w-80 bg-black/40 backdrop-blur-md border-l border-white/10 flex flex-col z-40 transition-transform duration-300 ${showChat ? 'translate-x-0' : 'translate-x-full'}`}>
+        {/* Chat Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/20">
+          <div className="flex items-center gap-2">
+            <MessageCircle className="w-5 h-5 text-yellow-400" />
+            <span className="text-white font-bold text-sm uppercase tracking-widest">Live Chat</span>
+          </div>
+          <button 
+            onClick={() => setShowChat(false)}
+            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/60 hover:text-white transition-all"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        {/* Chat Messages (bottom-to-top flow) */}
+        <div className="flex-1 overflow-y-auto flex flex-col-reverse p-4 gap-2">
+          {chatMessages.slice().reverse().map((msg, index) => (
+            <div 
+              key={`${msg.timestamp}-${index}`}
+              className="animate-in slide-in-from-bottom-2 fade-in duration-300"
+            >
+              <span className="text-yellow-400 font-bold text-sm">{msg.playerName}</span>
+              <span className="text-white/80 text-sm ml-2">{msg.message}</span>
+            </div>
+          ))}
+          {chatMessages.length === 0 && (
+            <div className="text-white/30 text-sm text-center">
+              No messages yet...
+            </div>
+          )}
+        </div>
+        
+        {/* Privacy Footnote */}
+        <div className="px-4 py-2 border-t border-white/5 bg-black/20">
+          <p className="text-white/30 text-[10px] text-center flex items-center justify-center gap-1">
+            <span>Messages will disappear when the session ends</span>
+          </p>
+        </div>
       </div>
     </div>
   );
