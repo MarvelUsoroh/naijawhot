@@ -13,6 +13,7 @@ interface GameConnection {
   drawCard: (roomCode: string, playerId: string) => Promise<void>;
   getHand: (roomCode: string, playerId: string) => Promise<Card[]>;
   setReady: (roomCode: string, playerId: string) => Promise<void>;
+  fetchGameState: (roomCode: string) => Promise<void>;
   sendMessage: (message: GameMessage) => Promise<void>; // Basic broadcast
 }
 
@@ -28,7 +29,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
   useEffect(() => {
     if (!roomCode) return;
 
-    console.log(`[GameConn] Subscribing to whot-${roomCode}`);
+
     const channel = supabase.channel(`whot-${roomCode}`);
     channelRef.current = channel;
 
@@ -44,7 +45,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('[GameConn] Connected');
+
           setIsConnected(true);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.error('[GameConn] Connection error:', status);
@@ -54,7 +55,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       });
 
     return () => {
-      console.log('[GameConn] Cleaning up channel');
+
       supabase.removeChannel(channel);
       setIsConnected(false);
     };
@@ -209,6 +210,16 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     },
     setReady: async (roomCode: string, playerId: string) => {
         await invokeFunctions('/game/ready', { roomCode, playerId });
+    },
+    fetchGameState: async (roomCode: string) => {
+        try {
+            const res = await invokeFunctions('/game/get-state', { roomCode });
+            if (res.gameState) {
+                setGameState(res.gameState);
+            }
+        } catch (e) {
+            console.error('[GameConn] Failed to fetch game state:', e);
+        }
     }
   };
 }

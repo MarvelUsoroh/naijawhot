@@ -245,3 +245,79 @@ export function calculateScore(hand: Card[]): number {
         return total + value;
     }, 0);
 }
+
+export function createInitialGameState(roomCode: string, players: { id: string; name: string }[]): GameState {
+  const deck = createDeck();
+  const shuffledDeck = shuffleDeck(deck);
+  const { hands, remainingDeck, startCard } = dealCards(shuffledDeck, players.length, 6);
+
+  const playerHands: Record<string, Card[]> = {};
+  const gamePlayers: Player[] = players.map((p, index) => {
+    playerHands[p.id] = hands[index];
+    return {
+      id: p.id,
+      name: p.name,
+      cardCount: hands[index].length,
+      isHost: index === 0,
+      isReady: false
+    };
+  });
+
+  const initialState: GameState = {
+    roomCode,
+    players: gamePlayers,
+    currentCard: startCard,
+    currentPlayerIndex: 0,
+    direction: 1,
+    selectedShape: null,
+    lastAction: "Game Started",
+    gameStarted: true,
+    winner: null,
+    deckCount: remainingDeck.length,
+    pickTwoChain: 0,
+    pickThreeChain: 0,
+    effectActive: null,
+    marketPile: remainingDeck,
+    discardPile: [startCard],
+    playerHands: playerHands,
+  };
+
+  return applyStartCardEffect(initialState);
+}
+
+export function applyStartCardEffect(state: GameState): GameState {
+    const newState = { ...state };
+    const { currentCard } = newState;
+    if (!currentCard) return newState;
+
+    // We can reuse getCardEffect, but need to be careful not to trigger dependencies that expect a 'player' 
+    // This is a "Dealer" effect.
+
+    // 1. Pick Two
+    if (currentCard.number === 2) {
+        newState.effectActive = 'pick_two';
+        newState.pickTwoChain = 1; // Single card from dealer = 1×2 = 2 cards
+        newState.lastAction = "Game Started with Pick Two!";
+    }
+    // 2. Pick Three
+    else if (currentCard.number === 5) {
+        newState.effectActive = 'pick_three';
+        newState.pickThreeChain = 1; // Single card from dealer = 1×3 = 3 cards
+        newState.lastAction = "Game Started with Pick Three!";
+    }
+    // 3. General Market
+    else if (currentCard.number === 14) {
+        newState.effectActive = 'general_market';
+        newState.lastAction = "Game Started with General Market!";
+        newState.generalMarketInitiator = 'dealer';
+        // All players are victims of the dealer
+        newState.marketDue = newState.players.map(p => p.id);
+    }
+    // 4. Suspension (Skip First Player)
+    else if (currentCard.number === 8) {
+        newState.lastAction = "Game Started with Suspension!";
+        newState.currentPlayerIndex = getNextPlayerIndex(newState.currentPlayerIndex, newState.players.length);
+    }
+    
+    return newState;
+}

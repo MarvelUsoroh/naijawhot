@@ -12,8 +12,11 @@ import {
   canDefendAgainstPick, 
   getPlayableCards,
   getCardEffect,
-  calculateScore
+  calculateScore,
+  createInitialGameState
 } from "../_shared/whot-rules.ts";
+
+// Force rebuild: 2025-12-14T19:00
 
 const app = new Hono();
 
@@ -83,39 +86,7 @@ app.post("*/game/start", async (c) => {
     }
 
     // Create new Game State
-    const deck = createDeck();
-    const shuffledDeck = shuffleDeck(deck);
-    const { hands, remainingDeck, startCard } = dealCards(shuffledDeck, players.length, 6);
-
-    const playerHands: Record<string, Card[]> = {};
-    const gamePlayers: Player[] = players.map((p: any, index: number) => {
-      playerHands[p.id] = hands[index];
-      return {
-        id: p.id,
-        name: p.name,
-        cardCount: hands[index].length,
-        isHost: index === 0, // First player is host usually
-      };
-    });
-
-    const initialState: GameState = {
-      roomCode,
-      players: gamePlayers,
-      currentCard: startCard,
-      currentPlayerIndex: 0,
-      direction: 1,
-      selectedShape: null,
-      lastAction: "Game Started",
-      gameStarted: true,
-      winner: null,
-      deckCount: remainingDeck.length,
-      pickTwoChain: 0,
-      pickThreeChain: 0,
-      effectActive: null,
-      marketPile: remainingDeck,
-      discardPile: [startCard],
-      playerHands: playerHands,
-    };
+    const initialState = createInitialGameState(roomCode, players);
 
     // Save to DB
     await saveGameState(roomCode, initialState);
@@ -132,11 +103,11 @@ app.post("*/game/start", async (c) => {
     });
 
     // Send deal messages (one per player) - Clients will listen
-    for (const player of gamePlayers) {
+    for (const player of initialState.players) {
       await broadcast(roomCode, "game-message", {
         type: "deal",
         playerId: player.id,
-        cards: playerHands[player.id],
+        cards: initialState.playerHands[player.id],
         gameState: {
             ...initialState,
             playerHands: {},
@@ -427,7 +398,24 @@ app.post("*/game/get-hand", async (c) => {
     }
 });
 
-// Debug 404
+// Get Game State (for Reconnection)
+app.post("*/game/get-state", async (c) => {
+    try {
+        const { roomCode } = await c.req.json();
+        const state = await getGameState(roomCode);
+        if (!state) return c.json({ error: "Game not found" }, 404);
+        
+        // Return public state (hide hands and market)
+        const publicState = {
+            ...state,
+            playerHands: {},
+            marketPile: []
+        };
+        return c.json({ gameState: publicState });
+    } catch(e) {
+        return c.json({error: e.message}, 500);
+    }
+});
 app.notFound((c: any) => {
   return c.json({ 
     error: `Route not found: ${c.req.path}`, 

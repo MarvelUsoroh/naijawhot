@@ -43,7 +43,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     playCard: playCardOnServer,
     drawCard: drawCardOnServer,
     getHand,
-    setReady
+    setReady,
+    fetchGameState
   } = useGameConnection(roomCode, handleMessage);
 
   const [playerName, setPlayerName] = useState('');
@@ -56,6 +57,14 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   // Shape Selection Modal State
   const [showShapePicker, setShowShapePicker] = useState(false);
   const [pendingCard, setPendingCard] = useState<Card | null>(null);
+
+  // Fetch current game state on mount (for reconnection)
+  useEffect(() => {
+    if (isConnected && roomCode && !gameState) {
+        console.log('[Controller] Fetching game state on mount...');
+        fetchGameState(roomCode);
+    }
+  }, [isConnected, roomCode, gameState, fetchGameState]);
 
   useEffect(() => {
     if (gameState?.gameStarted && isJoined && hand.length === 0) {
@@ -150,6 +159,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         setPendingCard(null);
         setShowShapePicker(false);
         setMessage("Card played!");
+        // Confirm state from server
+        await fetchHand();
     } catch (err: any) {
         console.error("Play error", err);
         setMessage(`Error: ${err.message}`);

@@ -10,30 +10,44 @@ export default function App() {
   const [roomCode, setRoomCode] = useState<string>('');
 
   useEffect(() => {
-    // Check for QR code join parameter
+    // Check for QR code join parameter OR localStorage
     const params = new URLSearchParams(window.location.search);
-    const joinCode = params.get('room'); // Changed 'join' to 'room' to match logic in HostView QR
+    const joinCode = params.get('room');
+    const savedRoom = localStorage.getItem('whot-room-code');
+    
     if (joinCode) {
       setRoomCode(joinCode);
       setView('controller');
-      // Clean up URL ? Maybe keep it for refresh?
-      // window.history.replaceState({}, '', window.location.pathname);
+      localStorage.setItem('whot-room-code', joinCode);
+    } else if (savedRoom) {
+      // Restore from localStorage (for refresh/reconnect)
+      setRoomCode(savedRoom);
+      setView('controller');
+      // Update URL to match
+      window.history.replaceState({}, '', `?room=${savedRoom}`);
     }
   }, []);
 
   const handleHostGame = () => {
     // Host generates their own code
+    localStorage.removeItem('whot-room-code'); // Clear any old session
     setView('host');
   };
 
   const handleJoinGame = (code: string) => {
     setRoomCode(code);
     setView('controller');
+    // Persist for reconnection
+    localStorage.setItem('whot-room-code', code);
+    window.history.replaceState({}, '', `?room=${code}`);
   };
 
   const handleBack = () => {
     setView('home');
     setRoomCode('');
+    // Clear persisted session
+    localStorage.removeItem('whot-room-code');
+    window.history.replaceState({}, '', window.location.pathname);
   };
 
   return (
