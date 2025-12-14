@@ -4,7 +4,7 @@ import { getPlayableCards, canDefendAgainstPick, canPlayCard } from '../../utils
 import { useGameConnection } from '../../utils/useGameConnection';
 import { Card, CardShape } from '../../types/game';
 import { WhotCard } from '../card';
-import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, Trophy } from 'lucide-react';
 // Note: Cross is not standard in Lucide, usually X or Plus. But Card.tsx uses Cross? 
 // Let's check Card.tsx again. It imports Cross. 
 // If Cross works there, I should import it here.
@@ -167,6 +167,17 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
       }
   };
 
+  const winner = gameState?.winner;
+  const iWon = winner === playerId;
+
+  // Sync Message from Server
+  useEffect(() => {
+     if (gameState?.lastAction) {
+         setMessage(gameState.lastAction);
+     }
+  }, [gameState?.lastAction]);
+
+  // Connect Status Color
   const getConnectionStatusColor = () => {
     if (error) return 'text-red-400';
     if (isConnected) return 'text-green-400';
@@ -177,25 +188,21 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
 
   // Join Screen
   if (!isJoined) {
+    // ... (existing join screen code)
     return (
       <div 
         className="relative min-h-screen flex flex-col items-center justify-center p-6 text-white bg-cover bg-center font-sans overflow-hidden"
-        style={{ 
-             background: 'var(--whot-table-gradient)',
-         }}
+        style={{ background: 'var(--whot-table-gradient)' }}
       >
         <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-overlay"
            style={{ backgroundImage: 'var(--whot-wood-texture)' }} />
            
-        <button
-          onClick={onBack}
-          className="absolute top-4 left-4 z-50 px-4 py-2 bg-black/40 hover:bg-black/60 backdrop-blur rounded-lg transition-all flex items-center gap-2 border border-white/10 text-sm font-bold shadow-lg"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back
+        <button onClick={onBack} className="absolute top-4 left-4 z-50 px-4 py-2 bg-black/40 hover:bg-black/60 backdrop-blur rounded-lg transition-all flex items-center gap-2 border border-white/10 text-sm font-bold shadow-lg">
+          <ArrowLeft className="w-4 h-4" /> Back
         </button>
 
         <div className="relative z-10 max-w-md w-full">
+          {/* ... existing join form ... */}
           <div className="text-center mb-8">
             <h1 className="text-4xl mb-6 font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-600 drop-shadow-sm">
                 JOIN GAME
@@ -246,37 +253,62 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   // Active Game UI
   return (
     <div className="fixed inset-0 flex flex-col font-sans"
-         style={{ 
-             background: 'var(--whot-table-gradient)',
-         }}>
+         style={{ background: 'var(--whot-table-gradient)' }}>
       <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-overlay"
            style={{ backgroundImage: 'var(--whot-wood-texture)' }} />
 
+      {/* GAME OVER OVERLAY */}
+      {winner && (
+          <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+              <div className="mb-6">
+                  {iWon ? (
+                      <Trophy className="w-24 h-24 text-yellow-400 animate-bounce" />
+                  ) : (
+                      <div className="text-6xl">🏁</div>
+                  )}
+              </div>
+              <h2 className="text-4xl font-black text-white mb-2 uppercase tracking-widest">
+                  {iWon ? 'CHECKUP!' : 'GAME OVER'}
+              </h2>
+              <p className={`text-xl font-bold mb-8 ${iWon ? 'text-yellow-400' : 'text-white/60'}`}>
+                  {iWon ? 'You won the game!' : `${gameState.players.find(p => p.id === winner)?.name} won!`}
+              </p>
+              <button 
+                  onClick={onBack}
+                  className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-white font-bold uppercase tracking-wider transition-all"
+              >
+                  Back to Menu
+              </button>
+          </div>
+      )}
+
       {/* Navbar */}
       <div className="relative z-20 flex items-center justify-between p-4 bg-black/40 backdrop-blur-md border-b border-white/5">
-        <button
-          onClick={onBack}
-          className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white border border-white/10"
-        >
+        <button onClick={onBack} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white border border-white/10">
           <ArrowLeft className="w-5 h-5" />
         </button>
         
         <div className="flex flex-col items-center">
             <div className="text-white text-base font-bold uppercase tracking-widest">{playerName}</div>
-            {isMyTurn && <div className="text-[10px] font-bold bg-yellow-400 text-black px-2 py-0.5 rounded-full animate-pulse">YOUR TURN</div>}
+            
+            {/* INCREASED SIZE FOR 'YOUR TURN' */}
+            {isMyTurn && (
+                <div className="text-sm font-black bg-yellow-400 text-black px-4 py-1 rounded-full animate-pulse shadow-lg mt-1 tracking-wider border-2 border-yellow-200">
+                    YOUR TURN
+                </div>
+            )}
         </div>
 
-        <button
-          onClick={() => setCardsHidden(!cardsHidden)}
-          className={`p-2 rounded-full transition-all border border-white/10 ${cardsHidden ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white'}`}
-        >
+        <button onClick={() => setCardsHidden(!cardsHidden)} className={`p-2 rounded-full transition-all border border-white/10 ${cardsHidden ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white'}`}>
           {cardsHidden ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
         </button>
       </div>
 
       {/* Status Banner */}
-      <div className="relative z-10 px-4 py-2 text-center backdrop-blur-sm border-b border-white/5">
-         <p className="text-sm font-medium text-white/80">{message}</p>
+      <div className={`relative z-10 px-4 py-3 text-center backdrop-blur-sm border-b border-white/5 transition-colors duration-300 ${message.toLowerCase().includes('warning') || message.toLowerCase().includes('last card') ? 'bg-red-900/50 border-red-500/30' : ''}`}>
+         <p className={`text-sm font-medium ${message.toLowerCase().includes('warning') || message.toLowerCase().includes('last card') ? 'text-red-200 animate-pulse font-bold uppercase tracking-wide' : 'text-white/80'}`}>
+             {message}
+         </p>
       </div>
 
        {/* Cards Area */}

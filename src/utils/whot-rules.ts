@@ -154,22 +154,7 @@ export function applyCardEffect(
       break;
 
     case 'suspension':
-      let skips = card.shape === 'star' ? 2 : 1;
-      // Special Rule for 2 Players: Star 8 should only skip the opponent (1 skip), 
-      // otherwise it lands back on the opponent (Skip 2 = Self + Opponent? No, Skip 0=Next, Skip 1=Next+1).
-      // actually:
-      // Index + 1 = Next Player (Normal Turn)
-      // Index + 1 + 1 (Skip 1) = Skips Next Player.
-      // Index + 1 + 2 (Skip 2) = Skips Next 2 Players.
-
-      // If 2 players:
-      // P1 plays. 
-      // Normal 8 (Skip 1): Skips P2. Turn back to P1.
-      // Star 8 (Skip 2): Skips P2, Skips P1. Turn back to P2. <--- User wants to avoid this.
-      // User wants: Star 8 in 2-player mode to just skip opponent.
-      if (state.players.length === 2 && skips > 1) {
-          skips = 1; 
-      }
+      const skips = 1;
 
       newState.lastAction = `${state.players[playerIndex].name} played SUSPENSION! Next ${skips} player${skips > 1 ? 's' : ''} skip turn`;
       // Skip the appropriate number of players

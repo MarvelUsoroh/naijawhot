@@ -191,17 +191,7 @@ export function applyCardEffect(
     case 'suspension':
        newState.lastAction = `${state.players[playerIndex].name} played SUSPENSION!`;
        
-       let skipCount = 1;
-       if (card.shape === 'star') {
-           skipCount = 2;
-           newState.lastAction = `${state.players[playerIndex].name} played STAR 8 (Suspension x2)!`;
-       }
-       
-       // SPECIAL RULE: If 2 players, Star 8 (Skip 2) would wrap around and land on Opponent.
-       // We want it to behave like Skip 1 (Land on Self).
-       if (state.players.length === 2 && skipCount > 1) {
-           skipCount = 1;
-       }
+       const skipCount = 1;
 
        // Skip players
        for(let i=0; i<skipCount; i++) {
