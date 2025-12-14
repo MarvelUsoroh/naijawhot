@@ -202,7 +202,7 @@ export function applyCardEffect(
        break;
 
     case 'general_market':
-       newState.lastAction = `${state.players[playerIndex].name} played GENERAL MARKET! Everyone pick a card!`;
+       newState.lastAction = `${state.players[playerIndex].name} played GENERAL MARKET!`;
        newState.effectActive = 'general_market'; 
        
        // Setup Manual Draw

@@ -206,28 +206,23 @@ app.post("*/game/play-card", async (c) => {
     // Apply Effects & Next Turn
     const updatedState = applyCardEffect(state, card, playerId);
 
-    // GENERAL MARKET: Auto-deal to opponents
+    // GENERAL MARKET: Initialize Manual Queue
     if (updatedState.effectActive === 'general_market') {
         const opponents = updatedState.players.filter(p => p.id !== playerId);
+        updatedState.marketDue = opponents.map(p => p.id);
+        updatedState.generalMarketInitiator = playerId;
         
-        for (const opponent of opponents) {
-             if (updatedState.marketPile.length > 0) {
-                 const card = updatedState.marketPile.shift()!;
-                 updatedState.playerHands[opponent.id].push(card);
-                 opponent.cardCount = updatedState.playerHands[opponent.id].length;
-                 
-                 // Notify opponent of new card
-                 await broadcast(roomCode, "game-message", {
-                    type: "draw",
-                    playerId: opponent.id,
-                    count: 1,
-                    cards: [card] 
-                 });
-             }
+        // Pass turn to first victim
+        if (updatedState.marketDue.length > 0) {
+            const firstVictimId = updatedState.marketDue[0];
+            const firstVictimIndex = updatedState.players.findIndex(p => p.id === firstVictimId);
+            if (firstVictimIndex !== -1) updatedState.currentPlayerIndex = firstVictimIndex;
+            
+            updatedState.lastAction = `${updatedState.players[playerIndex].name} played General Market!`;
+        } else {
+            // No opponents? Should not happen in MP, but reset if so
+            updatedState.effectActive = null;
         }
-        // Reset effect immediately after execution
-        updatedState.effectActive = null; 
-        updatedState.lastAction += " (Opponents drew 1)";
     }
 
     // Check Card Counts & Winner
@@ -250,7 +245,7 @@ app.post("*/game/play-card", async (c) => {
         updatedState.lastAction += `. ${playerName} is on last card!`;
     } else if (remainingCards === 2) {
         // Two Cards Warning
-        updatedState.lastAction += `. Warning, ${playerName} has two cards left!`;
+        updatedState.lastAction += `Warning, ${playerName} has two cards left!`;
     }
 
     // Parallelize Save and Broadcast for lower latency
@@ -284,6 +279,30 @@ app.post("*/game/play-card", async (c) => {
     console.error("Play error:", error);
     return c.json({ error: error.message }, 500);
   }
+});
+
+// Event: Player Ready for Next Game
+app.post("*/game/ready", async (c) => {
+    try {
+      const { roomCode, playerId } = await c.req.json();
+      const state = await getGameState(roomCode);
+      if (!state) return c.json({ error: "Game not found" }, 404);
+      
+      const playerIndex = state.players.findIndex(p => p.id === playerId);
+      if (playerIndex !== -1) {
+          state.players[playerIndex].isReady = true;
+          
+          await saveGameState(roomCode, state);
+          await broadcast(roomCode, "game-message", {
+              type: "state_sync",
+              playerId: "server",
+              gameState: state
+          });
+      }
+      return c.json({ success: true });
+    } catch (e: any) {
+        return c.json({ error: e.message }, 500);
+    }
 });
 
 app.post("*/game/draw", async (c) => {

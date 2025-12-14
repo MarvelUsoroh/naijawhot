@@ -15,6 +15,7 @@ export interface Player {
   hand?: Card[]; // Full hand for the player themselves
   mustPick?: number; // Cards to pick due to Pick Two/Pick Three chain
   suspended?: boolean; // Skipped due to Suspension
+  isReady?: boolean; // For "Play Again" synchronization
 }
 
 export interface GameState {

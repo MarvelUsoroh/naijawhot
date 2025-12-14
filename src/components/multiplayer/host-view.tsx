@@ -3,6 +3,7 @@ import { useGameConnection } from '../../utils/useGameConnection';
 import { WhotCard } from '../card';
 import { QrCode, Copy, Trophy, Crown, AlertCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { WinnerOverlay } from './winner-overlay';
 
 interface HostViewProps {
   onExit: () => void;
@@ -165,18 +166,13 @@ export function HostView({ onExit }: HostViewProps) {
           
           {/* Winner Overlay */}
           {winner && (
-              <div className="absolute inset-0 z-40 flex flex-col items-center justify-center animate-in zoom-in bg-black/50 backdrop-blur-sm">
-                  <Trophy className="w-32 h-32 text-yellow-400 drop-shadow-lg mb-4 animate-bounce" />
-                  <h1 className="text-6xl font-black text-white drop-shadow-xl text-center">
-                      {players.find(p => p.id === winner)?.name} Wins!
-                  </h1>
-                  <button 
-                    onClick={() => startGameOnServer(localRoomCode, players)} 
-                    className="mt-8 px-8 py-4 bg-yellow-400 hover:bg-yellow-300 text-black text-xl font-black rounded-xl shadow-xl transition-all hover:scale-105"
-                  >
-                      PLAY AGAIN
-                  </button>
-              </div>
+              <WinnerOverlay 
+                  winnerName={players.find(p => p.id === winner)?.name}
+                  isMe={false}
+                  players={gameState!.players} // Safe assertion: winner implies gameState exists
+                  isHost={true}
+                  onHostRestart={() => startGameOnServer(localRoomCode, gameState!.players)}
+              />
           )}
 
           {/* Lobby View (Pre-game) */}

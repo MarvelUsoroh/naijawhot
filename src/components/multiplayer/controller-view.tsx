@@ -4,11 +4,8 @@ import { getPlayableCards, canDefendAgainstPick, canPlayCard } from '../../utils
 import { useGameConnection } from '../../utils/useGameConnection';
 import { Card, CardShape } from '../../types/game';
 import { WhotCard } from '../card';
-import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, Trophy } from 'lucide-react';
-// Note: Cross is not standard in Lucide, usually X or Plus. But Card.tsx uses Cross? 
-// Let's check Card.tsx again. It imports Cross. 
-// If Cross works there, I should import it here.
-import { Cross } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, X as Cross, Trophy } from 'lucide-react';
+import { WinnerOverlay } from './winner-overlay';
 
 interface ControllerViewProps {
   roomCode: string;
@@ -45,7 +42,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     joinGame,
     playCard: playCardOnServer,
     drawCard: drawCardOnServer,
-    getHand
+    getHand,
+    setReady
   } = useGameConnection(roomCode, handleMessage);
 
   const [playerName, setPlayerName] = useState('');
@@ -109,6 +107,13 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     // If not my turn, ignore
     if (!isMyTurn) return;
 
+    // BLOCK PLAY if General Market is active - MUST PICK
+    if (gameState?.effectActive === 'general_market') {
+        setMessage("General Market! You must PICK a card.");
+        if (navigator.vibrate) navigator.vibrate(200);
+        return;
+    }
+
     // Client-side Validation
     if (gameState?.currentCard) {
         let isValid = false;
@@ -171,11 +176,25 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   const iWon = winner === playerId;
 
   // Sync Message from Server
+  // Sync Message from Server with Privacy Filter
   useEffect(() => {
      if (gameState?.lastAction) {
-         setMessage(gameState.lastAction);
+       let msg = gameState.lastAction;
+       // Remove "Warning, [Me] has..." or "[Me] is on last card"
+       if (playerName && msg.includes(playerName)) {
+           // Regex to remove the warning part
+           const twoCardRegex = new RegExp(`Warning, ${playerName} has two cards left!`, 'i');
+           const lastCardRegex = new RegExp(`\\. ${playerName} is on last card!`, 'i'); // Preceding dot
+           
+           msg = msg.replace(twoCardRegex, '').replace(lastCardRegex, '');
+           
+           // Clean up trailing dots/spaces if any
+           msg = msg.trim();
+           if (msg.endsWith('.')) msg = msg.slice(0, -1);
+       }
+       setMessage(msg);
      }
-  }, [gameState?.lastAction]);
+  }, [gameState?.lastAction, playerName]);
 
   // Connect Status Color
   const getConnectionStatusColor = () => {
@@ -259,27 +278,14 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
 
       {/* GAME OVER OVERLAY */}
       {winner && (
-          <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
-              <div className="mb-6">
-                  {iWon ? (
-                      <Trophy className="w-24 h-24 text-yellow-400 animate-bounce" />
-                  ) : (
-                      <div className="text-6xl">🏁</div>
-                  )}
-              </div>
-              <h2 className="text-4xl font-black text-white mb-2 uppercase tracking-widest">
-                  {iWon ? 'CHECKUP!' : 'GAME OVER'}
-              </h2>
-              <p className={`text-xl font-bold mb-8 ${iWon ? 'text-yellow-400' : 'text-white/60'}`}>
-                  {iWon ? 'You won the game!' : `${gameState.players.find(p => p.id === winner)?.name} won!`}
-              </p>
-              <button 
-                  onClick={onBack}
-                  className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-white font-bold uppercase tracking-wider transition-all"
-              >
-                  Back to Menu
-              </button>
-          </div>
+          <WinnerOverlay 
+               winnerName={gameState.players.find(p => p.id === winner)?.name}
+               isMe={iWon}
+               players={gameState.players}
+               isHost={false}
+               myPlayerId={playerId}
+               onPlayAgain={() => setReady(roomCode, playerId)}
+          />
       )}
 
       {/* Navbar */}
@@ -330,7 +336,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
          
          {/* Shape Picker Modal */}
          {showShapePicker && pendingCard && (
-             <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
+             <div className="absolute inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
                  <h3 className="text-white text-2xl mb-8 font-black uppercase tracking-wider">Choose a Shape</h3>
                  <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
                      {(['circle', 'triangle', 'cross', 'square', 'star'] as CardShape[]).map(shape => {
@@ -373,6 +379,9 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
 
          {/* Unified Action Banner - SMART & TARGETED */}
          {(() => {
+             // Hide banner if Shape Picker is open
+             if (showShapePicker && pendingCard) return null;
+
              if (!gameState?.currentCard) return null;
              const num = gameState.currentCard.number;
              

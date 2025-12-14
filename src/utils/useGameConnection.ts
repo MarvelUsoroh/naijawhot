@@ -12,6 +12,7 @@ interface GameConnection {
   playCard: (roomCode: string, playerId: string, card: Card, selectedShape?: CardShape | null) => Promise<void>;
   drawCard: (roomCode: string, playerId: string) => Promise<void>;
   getHand: (roomCode: string, playerId: string) => Promise<Card[]>;
+  setReady: (roomCode: string, playerId: string) => Promise<void>;
   sendMessage: (message: GameMessage) => Promise<void>; // Basic broadcast
 }
 
@@ -205,6 +206,9 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
             payload: { ...msg, timestamp: Date.now() }
          });
        }
+    },
+    setReady: async (roomCode: string, playerId: string) => {
+        await invokeFunctions('/game/ready', { roomCode, playerId });
     }
   };
 }
