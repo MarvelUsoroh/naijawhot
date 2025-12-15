@@ -170,8 +170,7 @@ export function applyCardEffect(
       break;
 
     default:
-      // Normal card - just advance turn
-      newState.lastAction = `${state.players[playerIndex].name} played ${card.shape.toUpperCase()} ${card.number}`;
+      // Normal card - just advance turn (no announcement needed)
       newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
       // Clear any pick chains
       newState.pickTwoChain = 0;

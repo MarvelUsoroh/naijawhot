@@ -74,6 +74,78 @@ async function broadcast(roomCode: string, event: string, payload: any) {
 }
 
 // ==========================================
+// ANALYTICS LOGGING (Fire-and-forget)
+// ==========================================
+
+// Create or get game session for a room
+async function getOrCreateSession(roomCode: string): Promise<string | null> {
+  try {
+    // Check for existing active session
+    const { data: existing } = await supabase
+      .from("game_sessions")
+      .select("id")
+      .eq("room_code", roomCode)
+      .is("ended_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (existing) return existing.id;
+    
+    // Create new session
+    const { data: newSession, error } = await supabase
+      .from("game_sessions")
+      .insert({ room_code: roomCode, player_count: 0 })
+      .select("id")
+      .single();
+    
+    if (error) {
+      console.error("Analytics: Failed to create session", error);
+      return null;
+    }
+    return newSession.id;
+  } catch (e) {
+    console.error("Analytics: Session error", e);
+    return null;
+  }
+}
+
+// Log player event (fire-and-forget - don't await this)
+function logPlayerEvent(
+  roomCode: string, 
+  playerId: string, 
+  playerName: string | undefined, 
+  eventType: string, 
+  metadata?: any
+) {
+  // Fire-and-forget - no await
+  supabase
+    .from("player_events")
+    .insert({
+      room_code: roomCode,
+      player_id: playerId,
+      player_name: playerName || "Unknown",
+      event_type: eventType,
+      metadata: metadata || null
+    })
+    .then(({ error }) => {
+      if (error) console.error("Analytics: Event log failed", error);
+    });
+}
+
+// Update game session
+function updateSession(roomCode: string, updates: Record<string, any>) {
+  supabase
+    .from("game_sessions")
+    .update(updates)
+    .eq("room_code", roomCode)
+    .is("ended_at", null)
+    .then(({ error }) => {
+      if (error) console.error("Analytics: Session update failed", error);
+    });
+}
+
+// ==========================================
 // ROUTES (Using wildcard prefix for flexibility)
 // ==========================================
 
@@ -115,6 +187,17 @@ app.post("*/game/start", async (c) => {
         }
       });
     }
+
+    // Analytics: Create session and log game start (fire-and-forget)
+    getOrCreateSession(roomCode).then(() => {
+      updateSession(roomCode, { 
+        started_at: new Date().toISOString(), 
+        player_count: players.length 
+      });
+      for (const player of initialState.players) {
+        logPlayerEvent(roomCode, player.id, player.name, 'join');
+      }
+    });
 
     return c.json({ success: true, state: initialState });
   } catch (error) {
@@ -211,13 +294,27 @@ app.post("*/game/play-card", async (c) => {
       
       updatedState.lastAction = `${playerName} - Checkup! Final Scores: ${scores}`;
       updatedState.gameStarted = false;
+      
+      // Analytics: Log win and end session (fire-and-forget)
+      logPlayerEvent(roomCode, playerId, playerName, 'win', { scores });
+      updateSession(roomCode, { 
+        ended_at: new Date().toISOString(), 
+        winner_id: playerId, 
+        winner_name: playerName 
+      });
     } else if (remainingCards === 1) {
         // Last Card Warning
-        updatedState.lastAction += `. ${playerName} is on last card!`;
+        updatedState.lastAction = `${playerName} is on last card!`;
     } else if (remainingCards === 2) {
         // Two Cards Warning
-        updatedState.lastAction += `Warning, ${playerName} has two cards left!`;
+        updatedState.lastAction = `Warning, ${playerName} has two cards left!`;
     }
+    
+    // Analytics: Log card play (fire-and-forget)
+    logPlayerEvent(roomCode, playerId, playerName, 'play_card', { 
+      card: card, 
+      shape: selectedShape 
+    });
 
     // Parallelize Save and Broadcast for lower latency
     const publicState = {
@@ -378,6 +475,11 @@ app.post("*/game/draw", async (c) => {
       });
 
       await Promise.all([savePromise, privateBroadcastPromise, publicBroadcastPromise]);
+      
+      // Analytics: Log draw (fire-and-forget)
+      logPlayerEvent(roomCode, playerId, state.players[playerIndex].name, 'draw', { 
+        count: drawnCards.length 
+      });
   
       return c.json({ success: true, cards: drawnCards });
     } catch (error) {

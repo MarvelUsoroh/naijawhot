@@ -220,7 +220,7 @@ export function applyCardEffect(
        break;
 
     default:
-       newState.lastAction = `${state.players[playerIndex].name} played ${card.shape} ${card.number}`;
+       // No announcement for normal cards - players can see the card on table
        newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
        // Clear chains if normal card played (and not defending)
        if (!state.effectActive) {

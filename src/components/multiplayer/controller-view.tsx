@@ -159,17 +159,14 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     setLoading(true);
     try {
         await playCardOnServer(roomCode, playerId, card, shape);
-        // Optimistic update
+        // Optimistic update - realtime broadcast will confirm
         setHand(prev => prev.filter(c => c.id !== card.id));
         setPendingCard(null);
         setShowShapePicker(false);
         setMessage("Card played!");
-        // Confirm state from server (non-blocking - don't await)
-        fetchHand();
     } catch (err: any) {
         console.error("Play error", err);
         setMessage(`Error: ${err.message}`);
-        fetchHand();
     } finally {
         setLoading(false);
     }
@@ -179,8 +176,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
       setLoading(true);
       try {
           await drawCardOnServer(roomCode, playerId);
-          await fetchHand(); 
-          setMessage("Drawn cards!");
+          // Realtime broadcast will update hand
+          setMessage("Drawing cards...");
       } catch (err: any) {
            setMessage(`Error drawing: ${err.message}`);
       } finally {
@@ -304,7 +301,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
           />
       )}
 
-      {/* Navbar */}
+      {/* Navbar - Hidden when winner is declared */}
+      {!winner && (
       <div className="relative z-20 flex items-center justify-between p-4 bg-black/40 backdrop-blur-md border-b border-white/5">
         <button onClick={onBack} className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white border border-white/10">
           <ArrowLeft className="w-5 h-5" />
@@ -313,8 +311,8 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         <div className="flex flex-col items-center">
             <div className="text-white text-base font-bold uppercase tracking-widest">{playerName}</div>
             
-            {/* INCREASED SIZE FOR 'YOUR TURN' */}
-            {isMyTurn && (
+            {/* INCREASED SIZE FOR 'YOUR TURN' - Hidden when winner */}
+            {isMyTurn && !winner && (
                 <div className="text-sm font-black bg-yellow-400 text-black px-4 py-1 rounded-full animate-pulse shadow-lg mt-1 tracking-wider border-2 border-yellow-200">
                     YOUR TURN
                 </div>
@@ -325,15 +323,19 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
           {cardsHidden ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
         </button>
       </div>
+      )}
 
-      {/* Status Banner */}
+      {/* Status Banner - Hidden when winner is declared */}
+      {!winner && (
       <div className={`relative z-10 px-4 py-3 text-center backdrop-blur-sm border-b border-white/5 transition-colors duration-300 ${message.toLowerCase().includes('warning') || message.toLowerCase().includes('last card') ? 'bg-red-900/50 border-red-500/30' : ''}`}>
          <p className={`text-sm font-medium ${message.toLowerCase().includes('warning') || message.toLowerCase().includes('last card') ? 'text-red-200 animate-pulse font-bold uppercase tracking-wide' : 'text-white/80'}`}>
              {message}
          </p>
       </div>
+      )}
 
-       {/* Cards Area */}
+       {/* Cards Area - Hidden when winner is declared */}
+      {!winner && (
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-4 overflow-hidden">
          {/* Table Visuals (Market + Current Card) */}
          {!cardsHidden && (
@@ -512,8 +514,10 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
           </div>
         )}
       </div>
+      )}
 
-       {/* Footer with Chat Input */}
+       {/* Footer with Chat Input - Hidden when winner is declared */}
+      {!winner && (
       <div className="relative z-20 px-4 py-3 bg-black/40 backdrop-blur-md border-t border-white/5">
         {/* Only show chat when game has started */}
         {gameState?.gameStarted && (
@@ -582,6 +586,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
            {hand.length} Cards held
         </p>
       </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 -- Migration: Create analytics tables for game tracking
 -- Created: 2024-12-14
+-- Updated: 2024-12-15 (removed session_id and latency_ms columns)
 
 -- ==========================================
 -- Table: game_sessions
@@ -27,24 +28,20 @@ CREATE INDEX IF NOT EXISTS idx_game_sessions_created_at ON game_sessions(created
 
 -- ==========================================
 -- Table: player_events
--- Tracks individual player actions and timing
+-- Tracks individual player actions (joined via room_code)
 -- ==========================================
 CREATE TABLE IF NOT EXISTS player_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
   room_code TEXT NOT NULL,
   player_id TEXT NOT NULL,
   player_name TEXT,
   event_type TEXT NOT NULL,         -- 'join', 'leave', 'reconnect', 'play_card', 'draw', 'win', 'ready'
   timestamp TIMESTAMPTZ DEFAULT NOW(),
-  latency_ms INTEGER,               -- Server-client round-trip time (optional)
-  metadata JSONB,                   -- Extra data (card played, shape selected, etc.)
-  
-  CONSTRAINT fk_session FOREIGN KEY (session_id) REFERENCES game_sessions(id) ON DELETE CASCADE
+  metadata JSONB                    -- Extra data (card played, shape selected, etc.)
 );
 
 -- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_player_events_session ON player_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_player_events_room_code ON player_events(room_code);
 CREATE INDEX IF NOT EXISTS idx_player_events_player ON player_events(player_id);
 CREATE INDEX IF NOT EXISTS idx_player_events_type ON player_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_player_events_timestamp ON player_events(timestamp);
@@ -78,8 +75,7 @@ SELECT
   gs.played_again,
   gs.total_turns,
   COUNT(DISTINCT pe.player_id) FILTER (WHERE pe.event_type = 'join') as unique_joins,
-  COUNT(*) FILTER (WHERE pe.event_type = 'reconnect') as reconnect_count,
-  AVG(pe.latency_ms) FILTER (WHERE pe.latency_ms IS NOT NULL) as avg_latency_ms
+  COUNT(*) FILTER (WHERE pe.event_type = 'reconnect') as reconnect_count
 FROM game_sessions gs
-LEFT JOIN player_events pe ON gs.id = pe.session_id
+LEFT JOIN player_events pe ON gs.room_code = pe.room_code
 GROUP BY gs.id;

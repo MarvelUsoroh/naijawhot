@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { Tv, Smartphone, Sparkles, Crown, ArrowLeft } from 'lucide-react';
+import { Tv, Smartphone, Sparkles, Crown, ArrowLeft, Eye } from 'lucide-react';
 import { generateRoomCode } from '../utils/game-helpers';
 
 interface HomeProps {
   onHostGame: (roomCode: string) => void;
   onJoinGame: (roomCode: string) => void;
+  onWatchGame: (roomCode: string) => void;
 }
 
-export function Home({ onHostGame, onJoinGame }: HomeProps) {
+export function Home({ onHostGame, onJoinGame, onWatchGame }: HomeProps) {
   const [joinCode, setJoinCode] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
 
@@ -54,7 +55,7 @@ export function Home({ onHostGame, onJoinGame }: HomeProps) {
             <Tv className="w-8 h-8 text-yellow-400" />
           </div>
           
-          <h2 className="text-2xl font-bold text-white mb-2">Host a Match</h2>
+          <h2 className="text-2xl font-bold text-white mb-2">Host Match</h2>
           <p className="text-white/60 mb-8 h-12">Turn your screen into the game table.</p>
           
           <button
@@ -111,6 +112,17 @@ export function Home({ onHostGame, onJoinGame }: HomeProps) {
                   Join
                 </button>
               </form>
+              
+              {/* Watch Game Button - Icon Only */}
+              <button
+                type="button"
+                onClick={() => onWatchGame(joinCode)}
+                disabled={joinCode.length !== 4}
+                title="Watch Game"
+                className="p-3 bg-purple-500/80 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-purple-400 text-white rounded-xl transition-all shadow-lg hover:shadow-purple-500/20"
+              >
+                <Eye className="w-6 h-6" />
+              </button>
             </div>
 
           )}

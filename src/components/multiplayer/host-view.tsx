@@ -7,11 +7,13 @@ import { WinnerOverlay } from './winner-overlay';
 
 interface HostViewProps {
   onExit: () => void;
+  initialRoomCode?: string;  // For spectators joining an existing room
+  isSpectator?: boolean;     // Hide controls when spectating
 }
 
-export function HostView({ onExit }: HostViewProps) {
-  // Generate room code once on mount
-  const [localRoomCode] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
+export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostViewProps) {
+  // Use provided room code (for spectator) or generate new one (for host)
+  const [localRoomCode] = useState(() => initialRoomCode || Math.floor(1000 + Math.random() * 9000).toString());
   
   // Local state for Lobby (before game starts)
   const [localPlayers, setLocalPlayers] = useState<{id: string, name: string}[]>([]);
@@ -113,15 +115,21 @@ export function HostView({ onExit }: HostViewProps) {
       <div className="relative z-10 flex items-center justify-between px-8 py-4 bg-gradient-to-b from-black/60 to-transparent">
         <div className="flex items-center gap-6">
             <div className="flex flex-col">
-                <span className="text-yellow-400 text-[10px] md:text-xs uppercase tracking-widest font-bold opacity-80">Room Code</span>
+                <span className="text-yellow-400 text-[10px] md:text-xs uppercase tracking-widest font-bold opacity-80">
+                  {isSpectator ? 'Spectating' : 'Room Code'}
+                </span>
                 <div className="flex items-center gap-3">
                     <span className="text-3xl md:text-5xl font-black text-white tracking-wider font-mono drop-shadow-md">{localRoomCode}</span>
-                    <button onClick={copyCode} className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all">
-                        <Copy className="w-5 h-5"/>
-                    </button>
-                    <button onClick={() => setShowQR(!showQR)} className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all">
-                        <QrCode className="w-5 h-5"/>
-                    </button>
+                    {!isSpectator && (
+                      <>
+                        <button onClick={copyCode} className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all">
+                            <Copy className="w-5 h-5"/>
+                        </button>
+                        <button onClick={() => setShowQR(!showQR)} className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all">
+                            <QrCode className="w-5 h-5"/>
+                        </button>
+                      </>
+                    )}
                 </div>
             </div>
         </div>
@@ -157,7 +165,7 @@ export function HostView({ onExit }: HostViewProps) {
            </div>
            
            <button onClick={onExit} className="px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-all border border-red-500/50">
-               End Game
+               {isSpectator ? 'Exit' : 'End Game'}
            </button>
         </div>
       </div>
@@ -217,13 +225,19 @@ export function HostView({ onExit }: HostViewProps) {
                           ))}
                       </div>
 
-                      <button
-                          onClick={handleStartGame}
-                          disabled={players.length < 2 || !isConnected}
-                          className="w-full py-4 bg-yellow-400 text-black font-black text-xl rounded-xl hover:bg-yellow-300 disabled:opacity-50 disabled:grayscale transition-all shadow-lg hover:shadow-yellow-400/20"
-                      >
-                          START MATCH
-                      </button>
+                      {!isSpectator ? (
+                        <button
+                            onClick={handleStartGame}
+                            disabled={players.length < 2 || !isConnected}
+                            className="w-full py-4 bg-yellow-400 text-black font-black text-xl rounded-xl hover:bg-yellow-300 disabled:opacity-50 disabled:grayscale transition-all shadow-lg hover:shadow-yellow-400/20"
+                        >
+                            START MATCH
+                        </button>
+                      ) : (
+                        <div className="w-full py-4 bg-purple-500/30 text-purple-200 font-bold text-lg rounded-xl text-center border border-purple-500/50">
+                            👁️ Waiting for host to start...
+                        </div>
+                      )}
                    </div>
                </div>
            )}
