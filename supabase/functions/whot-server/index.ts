@@ -16,7 +16,7 @@ import {
   createInitialGameState
 } from "../_shared/whot-rules.ts";
 
-// Force rebuild: 2025-12-14T19:00
+// Production build: 2025-12-17
 
 const app = new Hono();
 
@@ -24,7 +24,7 @@ const app = new Hono();
 app.use("*", cors({
   origin: '*',
   allowMethods: ['POST', 'GET', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'x-client-info', 'apikey']
+  allowHeaders: ['Content-Type', 'Authorization', 'x-client-info', 'apikey', 'x-region']
 }));
 
 // Initialize Supabase Client
@@ -316,7 +316,7 @@ app.post("*/game/play-card", async (c) => {
       shape: selectedShape 
     });
 
-    // Parallelize Save and Broadcast for lower latency
+    // Parallelize Save and ALL Broadcasts for lower latency
     const publicState = {
         ...updatedState,
         playerHands: {}, // Security: Don't leak hands
@@ -331,15 +331,14 @@ app.post("*/game/play-card", async (c) => {
       selectedShape: selectedShape,
       gameState: publicState
     });
-
-    await Promise.all([savePromise, broadcastPromise]);
-    
-    // Sync state for everyone
-    await broadcast(roomCode, "game-message", {
+    const stateSyncPromise = broadcast(roomCode, "game-message", {
         type: "state_sync",
         playerId: "server",
         gameState: publicState
     });
+
+    // All operations in parallel!
+    await Promise.all([savePromise, broadcastPromise, stateSyncPromise]);
 
     return c.json({ success: true, state: publicState });
 

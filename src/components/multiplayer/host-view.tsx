@@ -63,7 +63,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
   const topCard = gameState?.currentCard;
   const winner = gameState?.winner;
 
-  // Voice Announcer
+  // Voice Announcer (Host always plays sounds)
   const { play, playShapeCall } = useAnnouncer(true);
   const lastAnnouncedCard = useRef<string | null>(null);
   const lastAnnouncedWinner = useRef<string | null>(null);
@@ -79,14 +79,15 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
     if (lastAnnouncedCard.current === cardKey) return;
     
     // Check if we need to announce "Continue" from previous Hold On / General Market
-    if (pendingContinue.current) {
+    // But ONLY if there's no winner (don't say "Continue" after "Check Up!")
+    if (pendingContinue.current && !winner) {
       // Only announce "Continue" if the follow-up card is NOT a power card
       const isPowerCard = [1, 2, 5, 8, 14, 20].includes(topCard.number);
       if (!isPowerCard) {
         setTimeout(() => play('continue'), 1500);
       }
-      pendingContinue.current = false; // Always clear, whether we played or not
     }
+    pendingContinue.current = false; // Always clear, whether we played or not
     
     lastAnnouncedCard.current = cardKey;
 
@@ -133,31 +134,29 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
         applauseAudio.play().catch(() => {});
         
         // Fire confetti celebration!
-        const duration = 3000;
-        const end = Date.now() + duration;
-        
         const fireConfetti = () => {
+          // Burst 1 (Left)
           confetti({
-            particleCount: 50,
+            particleCount: 80,
             angle: 60,
             spread: 55,
             origin: { x: 0, y: 0.8 },
             colors: ['#FFD700', '#FFA500', '#FF6347', '#00FF00', '#1E90FF']
           });
+          // Burst 2 (Right)
           confetti({
-            particleCount: 50,
+            particleCount: 80,
             angle: 120,
             spread: 55,
             origin: { x: 1, y: 0.8 },
             colors: ['#FFD700', '#FFA500', '#FF6347', '#00FF00', '#1E90FF']
           });
-          
-          if (Date.now() < end) {
-            requestAnimationFrame(fireConfetti);
-          }
         };
-        
+
+        // Fire 5 distinct bursts over 2 seconds (much lighter on CPU than requestAnimationFrame)
         fireConfetti();
+        const interval = setInterval(fireConfetti, 400);
+        setTimeout(() => clearInterval(interval), 2000);
       }, 1500);
     }
   }, [winner, play]);

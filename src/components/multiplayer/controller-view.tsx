@@ -1,10 +1,11 @@
 // Controller View Component
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getPlayableCards, canDefendAgainstPick, canPlayCard } from '../../utils/whot-rules';
 import { useGameConnection } from '../../utils/useGameConnection';
+import { useAnnouncer } from '../../utils/useAnnouncer';
 import { Card, CardShape } from '../../types/game';
 import { WhotCard } from '../card';
-import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, X as Cross, Trophy, MessageCircle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, X as Cross, Trophy, MessageCircle, Volume2, VolumeX } from 'lucide-react';
 import { WinnerOverlay } from './winner-overlay';
 
 interface ControllerViewProps {
@@ -52,6 +53,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   const [isJoined, setIsJoined] = useState(false);
   const [hand, setHand] = useState<Card[]>([]);
   const [cardsHidden, setCardsHidden] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // Muted by default on phone
   const [message, setMessage] = useState('Enter your name to join...');
   const [loading, setLoading] = useState(false);
 
@@ -62,6 +64,11 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   // Chat State
   const [chatInput, setChatInput] = useState('');
   const [isChatFocused, setIsChatFocused] = useState(false);
+
+  // Voice Announcer (controlled by local mute toggle)
+  const { play, playShapeCall } = useAnnouncer(!isMuted);
+  const lastAnnouncedCard = useRef<string | null>(null);
+  const lastAnnouncedWinner = useRef<string | null>(null);
 
   // Fetch current game state on mount (for reconnection)
   useEffect(() => {
@@ -91,6 +98,50 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         }
     }
   }, [gameState, isJoined, playerId]);
+
+  // Derived game state
+  const topCard = gameState?.currentCard;
+  const winner = gameState?.winner;
+
+  // Announce power cards when they appear
+  useEffect(() => {
+    if (!topCard) return;
+    
+    const cardKey = `${topCard.shape}-${topCard.number}`;
+    if (lastAnnouncedCard.current === cardKey) return;
+    lastAnnouncedCard.current = cardKey;
+
+    switch (topCard.number) {
+      case 2:
+        play('pick_two');
+        break;
+      case 5:
+        play('pick_three');
+        break;
+      case 14:
+        play('general_market');
+        break;
+      case 1:
+        play('hold_on');
+        break;
+      case 8:
+        play('suspension');
+        break;
+      case 20:
+        if (gameState?.selectedShape) {
+          playShapeCall(gameState.selectedShape);
+        }
+        break;
+    }
+  }, [topCard, gameState?.selectedShape, play, playShapeCall]);
+
+  // Announce winner
+  useEffect(() => {
+    if (winner && winner !== lastAnnouncedWinner.current) {
+      lastAnnouncedWinner.current = winner;
+      play('check_up');
+    }
+  }, [winner, play]);
 
   const fetchHand = async () => {
       try {
@@ -185,7 +236,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
       }
   };
 
-  const winner = gameState?.winner;
+
   const iWon = winner === playerId;
 
   // Sync Message from Server
@@ -319,9 +370,18 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
             )}
         </div>
 
-        <button onClick={() => setCardsHidden(!cardsHidden)} className={`p-2 rounded-full transition-all border border-white/10 ${cardsHidden ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white'}`}>
-          {cardsHidden ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-        </button>
+        <div className="flex gap-2">
+            <button 
+                onClick={() => setIsMuted(!isMuted)} 
+                className={`p-2 rounded-full transition-all border border-white/10 ${!isMuted ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-white/10 text-white/50'}`}
+                title={isMuted ? 'Enable Sound' : 'Mute Sound'}
+            >
+                {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+            </button>
+            <button onClick={() => setCardsHidden(!cardsHidden)} className={`p-2 rounded-full transition-all border border-white/10 ${cardsHidden ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white'}`}>
+                {cardsHidden ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+        </div>
       </div>
       )}
 

@@ -134,7 +134,8 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
 
     const headers: any = {
        'Content-Type': 'application/json',
-       'Authorization': `Bearer ${token || anonKey}` // Use session token if available, else anon
+       'Authorization': `Bearer ${token || anonKey}`, // Use session token if available, else anon
+       'x-region': 'eu-west-2' // Pin to London (same region as database)
     };
 
     const response = await fetch(functionUrl, {
