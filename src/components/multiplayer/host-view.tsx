@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useGameConnection } from '../../utils/useGameConnection';
+import { useAnnouncer } from '../../utils/useAnnouncer';
+import confetti from 'canvas-confetti';
 import { WhotCard } from '../card';
 import { QrCode, Copy, Trophy, Crown, AlertCircle, X, MessageCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -61,7 +63,117 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
   const topCard = gameState?.currentCard;
   const winner = gameState?.winner;
 
-  // Effects for sounds/messages
+  // Voice Announcer
+  const { play, playShapeCall } = useAnnouncer(true);
+  const lastAnnouncedCard = useRef<string | null>(null);
+  const lastAnnouncedWinner = useRef<string | null>(null);
+  const pendingContinue = useRef<boolean>(false); // Track if we need to announce "Continue" after next play
+
+  // Announce power cards and game events
+  useEffect(() => {
+    if (!topCard) return;
+    
+    const cardKey = `${topCard.shape}-${topCard.number}`;
+    
+    // Prevent duplicate announcements for the same card
+    if (lastAnnouncedCard.current === cardKey) return;
+    
+    // Check if we need to announce "Continue" from previous Hold On / General Market
+    if (pendingContinue.current) {
+      // Only announce "Continue" if the follow-up card is NOT a power card
+      const isPowerCard = [1, 2, 5, 8, 14, 20].includes(topCard.number);
+      if (!isPowerCard) {
+        setTimeout(() => play('continue'), 1500);
+      }
+      pendingContinue.current = false; // Always clear, whether we played or not
+    }
+    
+    lastAnnouncedCard.current = cardKey;
+
+    // Trigger sound based on card number
+    switch (topCard.number) {
+      case 2:
+        play('pick_two');
+        break;
+      case 5:
+        play('pick_three');
+        break;
+      case 14:
+        play('general_market');
+        pendingContinue.current = true; // Set flag to announce "Continue" on next play
+        break;
+      case 1:
+        play('hold_on');
+        pendingContinue.current = true; // Set flag to announce "Continue" on next play
+        break;
+      case 8:
+        play('suspension');
+        break;
+      case 20:
+        // For Whot card, announce the selected shape
+        if (gameState?.selectedShape) {
+          playShapeCall(gameState.selectedShape);
+        }
+        break;
+    }
+  }, [topCard, gameState?.selectedShape, play, playShapeCall]);
+
+  // Announce winner with confetti and applause (Host and Spectator)
+  useEffect(() => {
+    if (winner && winner !== lastAnnouncedWinner.current) {
+      lastAnnouncedWinner.current = winner;
+      
+      // Play check_up announcement
+      play('check_up');
+      
+      // After check_up (~1.5s), play applause and fire confetti
+      setTimeout(() => {
+        // Play applause (separate audio instance)
+        const applauseAudio = new Audio('/sounds/applause.mp3');
+        applauseAudio.play().catch(() => {});
+        
+        // Fire confetti celebration!
+        const duration = 3000;
+        const end = Date.now() + duration;
+        
+        const fireConfetti = () => {
+          confetti({
+            particleCount: 50,
+            angle: 60,
+            spread: 55,
+            origin: { x: 0, y: 0.8 },
+            colors: ['#FFD700', '#FFA500', '#FF6347', '#00FF00', '#1E90FF']
+          });
+          confetti({
+            particleCount: 50,
+            angle: 120,
+            spread: 55,
+            origin: { x: 1, y: 0.8 },
+            colors: ['#FFD700', '#FFA500', '#FF6347', '#00FF00', '#1E90FF']
+          });
+          
+          if (Date.now() < end) {
+            requestAnimationFrame(fireConfetti);
+          }
+        };
+        
+        fireConfetti();
+      }, 1500);
+    }
+  }, [winner, play]);
+
+  // Announce last card warnings (delayed so power card announcement plays first)
+  useEffect(() => {
+    const action = gameState?.lastAction?.toLowerCase() || '';
+    if (action.includes('last card')) {
+      // Delay to let power card announcement play first
+      setTimeout(() => play('last_card'), 1500);
+    } else if (action.includes('warning') && action.includes('two cards')) {
+      setTimeout(() => play('warning'), 1500);
+    }
+  }, [gameState?.lastAction, play]);
+
+  // Effects for text messages
   useEffect(() => {
      if (gameState?.lastAction) {
        setMessage(gameState.lastAction);
@@ -134,17 +246,22 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
             </div>
         </div>
 
-        {/* Unified Message Banner - HOST SEES ALL */}
+        {/* Unified Message Banner - Shows power card effects only when active */}
         <div className="absolute left-1/2 -translate-x-1/2 top-24 pointer-events-none z-50">
-             {gameState?.currentCard && [1, 2, 5, 8, 14, 20].includes(gameState.currentCard.number) ? (
+             {gameState?.effectActive && !winner ? (
                  <div className="bg-red-600/90 px-8 py-3 rounded-full border border-red-400/50 shadow-[0_0_20px_rgba(220,38,38,0.5)] animate-bounce flex flex-col items-center">
                      <p className="text-white font-black uppercase tracking-widest text-lg drop-shadow-md">
-                        {gameState.currentCard.number === 14 ? "GO TO MARKET!" : 
-                         gameState.currentCard.number === 2 ? "PICK TWO!" :
-                         gameState.currentCard.number === 5 ? "PICK THREE!" :
-                         gameState.currentCard.number === 1 ? "HOLD ON!" :
-                         gameState.currentCard.number === 8 ? "SUSPENSION!" : 
-                         gameState.currentCard.number === 20 ? `I NEED ${gameState.selectedShape?.toUpperCase() || "A SHAPE"}!` : ""}
+                        {gameState.effectActive === 'general_market' ? "GO TO MARKET!" : 
+                         gameState.effectActive === 'pick_two' ? "PICK TWO!" :
+                         gameState.effectActive === 'pick_three' ? "PICK THREE!" :
+                         gameState.effectActive === 'suspension' ? "SUSPENSION!" : ""}
+                     </p>
+                     <p className="text-white/80 text-xs font-medium mt-1">{gameState?.lastAction}</p>
+                 </div>
+             ) : gameState?.currentCard?.number === 20 && gameState?.selectedShape && !winner ? (
+                 <div className="bg-red-600/90 px-8 py-3 rounded-full border border-red-400/50 shadow-[0_0_20px_rgba(220,38,38,0.5)] animate-bounce flex flex-col items-center">
+                     <p className="text-white font-black uppercase tracking-widest text-lg drop-shadow-md">
+                        I NEED {gameState.selectedShape.toUpperCase()}!
                      </p>
                      <p className="text-white/80 text-xs font-medium mt-1">{gameState?.lastAction}</p>
                  </div>

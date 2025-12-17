@@ -42,3 +42,6 @@ supabase/functions/**/.env
 
 # Tests
 tests/
+
+# Documentation
+docs/

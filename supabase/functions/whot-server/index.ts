@@ -292,7 +292,7 @@ app.post("*/game/play-card", async (c) => {
           return `${p.name}: ${score}`;
       }).join(', ');
       
-      updatedState.lastAction = `${playerName} - Checkup! Final Scores: ${scores}`;
+      updatedState.lastAction = `Final Scores: ${scores}`;
       updatedState.gameStarted = false;
       
       // Analytics: Log win and end session (fire-and-forget)
