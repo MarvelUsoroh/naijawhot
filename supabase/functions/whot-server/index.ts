@@ -206,6 +206,28 @@ app.post("*/game/start", async (c) => {
   }
 });
 
+app.post("*/game/get-state", async (c) => {
+  try {
+    const { roomCode } = await c.req.json();
+
+    if (!roomCode) return c.json({ error: "Missing roomCode" }, 400);
+
+    const state = await getGameState(roomCode);
+    if (!state) return c.json({ error: "Game not found" }, 404);
+
+    return c.json({
+      gameState: {
+        ...state,
+        playerHands: {},
+        marketPile: [],
+      },
+    });
+  } catch (error) {
+    console.error("Get-state error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 app.post("*/game/play-card", async (c) => {
   try {
     const { roomCode, playerId, card, selectedShape } = await c.req.json();
@@ -494,25 +516,6 @@ app.post("*/game/get-hand", async (c) => {
         
         const hand = state.playerHands[playerId] || [];
         return c.json({ hand });
-    } catch(e) {
-        return c.json({error: e.message}, 500);
-    }
-});
-
-// Get Game State (for Reconnection)
-app.post("*/game/get-state", async (c) => {
-    try {
-        const { roomCode } = await c.req.json();
-        const state = await getGameState(roomCode);
-        if (!state) return c.json({ error: "Game not found" }, 404);
-        
-        // Return public state (hide hands and market)
-        const publicState = {
-            ...state,
-            playerHands: {},
-            marketPile: []
-        };
-        return c.json({ gameState: publicState });
     } catch(e) {
         return c.json({error: e.message}, 500);
     }

@@ -24,12 +24,58 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
   const [playerId, setPlayerId] = useState<string | null>(null);
 
   const channelRef = useRef<any>(null);
+  const isSubscribedRef = useRef(false);
+  const pendingBroadcastsRef = useRef<any[]>([]);
+  const accessTokenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (!isMounted) return;
+        accessTokenRef.current = session?.access_token ?? null;
+      })
+      .catch(() => {
+        // Ignore session lookup failures; fall back to anon key
+      });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      accessTokenRef.current = session?.access_token ?? null;
+    });
+
+    return () => {
+      isMounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  const sendBroadcast = useCallback(async (payload: GameMessage) => {
+    const channel = channelRef.current;
+    if (!channel) throw new Error('No connection');
+
+    const envelope = {
+      type: 'broadcast',
+      event: 'game-message',
+      payload,
+    };
+
+    if (isSubscribedRef.current) {
+      await channel.send(envelope);
+      return;
+    }
+
+    pendingBroadcastsRef.current.push(envelope);
+  }, []);
 
   // Subscribe to Realtime Channel
   useEffect(() => {
     if (!roomCode) return;
 
 
+    isSubscribedRef.current = false;
+    pendingBroadcastsRef.current = [];
     const channel = supabase.channel(`whot-${roomCode}`);
     channelRef.current = channel;
 
@@ -45,17 +91,34 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-
+          isSubscribedRef.current = true;
           setIsConnected(true);
+
+          const channel = channelRef.current;
+          const queued = pendingBroadcastsRef.current;
+          pendingBroadcastsRef.current = [];
+
+          if (channel && queued.length > 0) {
+            (async () => {
+              for (const msg of queued) {
+                await channel.send(msg);
+              }
+            })().catch((e) => {
+              console.error('[GameConn] Failed to flush queued broadcasts:', e);
+            });
+          }
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.error('[GameConn] Connection error:', status);
           setError(`Connection failed: ${status}`);
           setIsConnected(false);
+          isSubscribedRef.current = false;
         }
       });
 
     return () => {
 
+      isSubscribedRef.current = false;
+      pendingBroadcastsRef.current = [];
       supabase.removeChannel(channel);
       setIsConnected(false);
     };
@@ -124,9 +187,9 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     // This expects the path.
     // It's safer to use `fetch` with the session token.
     
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token; // If using RLS or explicit Auth header
+    const token = accessTokenRef.current; // Avoid per-request session lookup
     const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const functionRegion = import.meta.env.VITE_SUPABASE_FUNCTION_REGION as string | undefined;
     
     // Construct base URL
     const projectUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -135,8 +198,11 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     const headers: any = {
        'Content-Type': 'application/json',
        'Authorization': `Bearer ${token || anonKey}`, // Use session token if available, else anon
-       'x-region': 'eu-west-2' // Pin to London (same region as database)
     };
+
+    if (functionRegion) {
+      headers['x-region'] = functionRegion;
+    }
 
     const response = await fetch(functionUrl, {
       method: 'POST',
@@ -174,16 +240,11 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       // So players "join" by signaling the host?
       // Yes, Host collects "join" messages via Realtime, then sends the list to `game/start`.
       // So `joinGame` is just a Realtime broadcast.
-      if (!channelRef.current) throw new Error("No connection");
-      await channelRef.current.send({
-        type: 'broadcast',
-        event: 'game-message',
-        payload: {
-           type: 'join', 
-           playerId: playerId, 
-           playerName,
-           timestamp: Date.now()
-        }
+      await sendBroadcast({
+        type: 'join',
+        playerId: playerId,
+        playerName,
+        timestamp: Date.now()
       });
       // But we should set playerId locally
     },
@@ -201,13 +262,8 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       return res.hand;
     },
     sendMessage: async (msg) => {
-       if (channelRef.current) {
-         await channelRef.current.send({
-            type: 'broadcast',
-            event: 'game-message',
-            payload: { ...msg, timestamp: Date.now() }
-         });
-       }
+       if (!channelRef.current) return;
+       await sendBroadcast({ ...msg, timestamp: Date.now() });
     },
     setReady: async (roomCode: string, playerId: string) => {
         await invokeFunctions('/game/ready', { roomCode, playerId });
