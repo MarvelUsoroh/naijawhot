@@ -1,6 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from './supabase-client';
 import { GameState, GameMessage, Card, CardShape } from '../types/game';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+
+type BroadcastEnvelope = {
+  type: 'broadcast';
+  event: 'game-message';
+  payload: GameMessage;
+};
 
 interface GameConnection {
   isConnected: boolean;
@@ -13,7 +20,7 @@ interface GameConnection {
   drawCard: (roomCode: string, playerId: string) => Promise<void>;
   getHand: (roomCode: string, playerId: string) => Promise<Card[]>;
   setReady: (roomCode: string, playerId: string) => Promise<void>;
-  fetchGameState: (roomCode: string) => Promise<void>;
+  fetchGameState: (roomCode: string) => Promise<GameState | null>;
   sendMessage: (message: GameMessage) => Promise<void>; // Basic broadcast
 }
 
@@ -23,10 +30,11 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
 
-  const channelRef = useRef<any>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const isSubscribedRef = useRef(false);
-  const pendingBroadcastsRef = useRef<any[]>([]);
+  const pendingBroadcastsRef = useRef<BroadcastEnvelope[]>([]);
   const accessTokenRef = useRef<string | null>(null);
+  const lastGameStateTimestampRef = useRef<number>(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -55,7 +63,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     const channel = channelRef.current;
     if (!channel) throw new Error('No connection');
 
-    const envelope = {
+    const envelope: BroadcastEnvelope = {
       type: 'broadcast',
       event: 'game-message',
       payload,
@@ -84,8 +92,18 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
         // console.log('[GameConn] Received:', payload.payload); // Verbose
         if (onMessage) onMessage(payload.payload);
         
-        // Auto-update local state if it's a sync message
-        if (payload.payload.type === 'state_sync' && payload.payload.gameState) {
+        // Auto-update local state whenever a message carries a full game state.
+        // This avoids controller desync when a client misses a `state_sync` but receives
+        // another message (e.g. `card_played`) that still contains `gameState`.
+        // Use timestamp to prevent out-of-order updates from overwriting newer state.
+        if (payload.payload.gameState) {
+          const incomingTs = payload.payload.timestamp;
+
+          if (typeof incomingTs === 'number' && incomingTs > 0) {
+            if (incomingTs < lastGameStateTimestampRef.current) return;
+            lastGameStateTimestampRef.current = incomingTs;
+          }
+
           setGameState(payload.payload.gameState);
         }
       })
@@ -125,55 +143,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
   }, [roomCode, onMessage]);
 
   // Edge Function Calls
-  
-  const startGame = useCallback(async (code: string, players: {id: string, name: string}[]) => {
-    const { data, error } = await supabase.functions.invoke('whot-server', {
-      body: { 
-        // We probably need a 'router' in the function or different endpoints?
-        // The implementation created /game/start, /game/play-card etc.
-        // supabase-js `invoke` sends to the function root.
-        // Hono handles routing. But invoke sends request to the root URL.
-        // We need to ensure the URL matches Hono routes.
-        // Usually invoke('whot-server') -> POST https://.../functions/v1/whot-server
-        // Our Hono app has `app.post('/game/start', ...)`
-        // So we might need to append path to the invoke URL? 
-        // invoke does not easily support subpaths unless configured?
-        // Actually, looking at docs: supabase.functions.invoke('whot-server', { headers: ... }) sends to root.
-        // Hono routes are relative to function mount.
-        // If function is mounted at `whot-server`, then `app.post('/game/start')` implies `whot-server/game/start`.
-        // Standard Supabase functions don't really do sub-routing easily with `invoke` unless we pass the path in body or header to route internally?
-        // Wait, Hono on Supabase Functions usually handles the full path.
-        // If I call invoke('whot-server'), it hits the root. 
-        // If I want /game/start, I might need to use `fetch` with the full URL, or tweak Hono.
-        // Let's assume standard Hono routing:
-        // We can pass the intent in the body?
-        // OR better: Create a "router" helper or just use fetch?
-        // Let's use `invoke` but maybe change the Hono setup to just handle logic based on "action" field?
-        // I defined types with `action: 'join' | 'play' ...` in `types.ts` but implemented standard REST in `index.ts`.
-        // Let's try to match the REST implementation:
-        // Hono `app.post('/game/start')` expects `POST /game/start`.
-        // Supabase `invoke` sends to `POST /`. 
-        // Implementation might fail routing if Hono expects `/game/start`.
-        // FIX: I will modify this hook to use `fetch` with constructed URL to be safe, OR wrap in a helper.
-        // But `supabase.functions.invoke` conveniently handles auth.
-        // Let's use invoke but we need to route.
-        // Strategy: Modify Hono to use a single endpoint or use `c.req.path`? 
-        // Actually, invoke supports passing custom headers/method.
-        // But the PATH is the issue.
-        // Let's stick to REST structure I wrote. To call it, maybe `invoke` isn't best?
-        // Let's use `supabase.auth.getSession()` token + fetch?
-        // Or simpler: Update `whot-server/index.ts` to standard "Action" pattern if deployment complicates routing? 
-        // NO, standard REST is better.
-        // Let's verify how to call subpaths.
-        // We can append path to the function name? `invoke('whot-server/game/start')` ? No.
-        // Let's assume the Hono router handles `/*` and we are sending to standard paths.
-        // I will use `fetch` with the function URL for now to be precise.
-      }
-    });
-    // Placeholder implementation below using fetch for clarity
-  }, []);
-
-  const invokeFunctions = async (endpoint: string, body: any) => {
+  const invokeFunctions = async (endpoint: string, body: Record<string, unknown>) => {
     // Get function URL
     // In local dev: http://localhost:54321/functions/v1/whot-server/...
     // In prod: https://[project].supabase.co/functions/v1/whot-server/...
@@ -195,7 +165,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     const projectUrl = import.meta.env.VITE_SUPABASE_URL;
     const functionUrl = `${projectUrl}/functions/v1/whot-server${endpoint}`;
 
-    const headers: any = {
+     const headers: Record<string, string> = {
        'Content-Type': 'application/json',
        'Authorization': `Bearer ${token || anonKey}`, // Use session token if available, else anon
     };
@@ -215,7 +185,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
        try {
           const err = await response.json();
           errorMessage = err.error || errorMessage;
-       } catch (e) {
+       } catch {
           // If not JSON, use status text or raw text
           const text = await response.text();
           errorMessage = text || `Error ${response.status}: ${response.statusText}`;
@@ -246,7 +216,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
         playerName,
         timestamp: Date.now()
       });
-      // But we should set playerId locally
+      setPlayerId(playerId);
     },
     startGame: async (roomCode, players) => {
       await invokeFunctions('/game/start', { roomCode, players });
@@ -258,7 +228,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       await invokeFunctions('/game/draw', { roomCode, playerId });
     },
     getHand: async (roomCode, playerId) => {
-      const res = await invokeFunctions('/game/get-hand', { roomCode, playerId });
+      const res = (await invokeFunctions('/game/get-hand', { roomCode, playerId })) as { hand: Card[] };
       return res.hand;
     },
     sendMessage: async (msg) => {
@@ -270,12 +240,13 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     },
     fetchGameState: async (roomCode: string) => {
         try {
-            const res = await invokeFunctions('/game/get-state', { roomCode });
-            if (res.gameState) {
-                setGameState(res.gameState);
-            }
+        const res = (await invokeFunctions('/game/get-state', { roomCode })) as { gameState?: GameState };
+        const fetched = res.gameState ?? null;
+        if (fetched) setGameState(fetched);
+        return fetched;
         } catch (e) {
             console.error('[GameConn] Failed to fetch game state:', e);
+            return null;
         }
     }
   };

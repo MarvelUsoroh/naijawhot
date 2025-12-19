@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Analytics } from '@vercel/analytics/react';
 import { Home } from './components/home';
 import { HostView } from './components/multiplayer/host-view';
@@ -7,23 +7,17 @@ import { ControllerView } from './components/multiplayer/controller-view';
 type View = 'home' | 'host' | 'controller' | 'spectator';
 
 export default function App() {
-  const [view, setView] = useState<View>('home');
-  const [roomCode, setRoomCode] = useState<string>('');
-
-  useEffect(() => {
-    // Check for URL parameters only (no localStorage auto-reconnect)
+  // Derive initial view/roomCode from URL params
+  const [view, setView] = useState<View>(() => {
     const params = new URLSearchParams(window.location.search);
-    const joinCode = params.get('room');
-    const spectateCode = params.get('spectate');
-    
-    if (spectateCode) {
-      setRoomCode(spectateCode);
-      setView('spectator');
-    } else if (joinCode) {
-      setRoomCode(joinCode);
-      setView('controller');
-    }
-  }, []);
+    if (params.get('spectate')) return 'spectator';
+    if (params.get('room')) return 'controller';
+    return 'home';
+  });
+  const [roomCode, setRoomCode] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('spectate') || params.get('room') || '';
+  });
 
   const handleHostGame = () => {
     // Host generates their own code

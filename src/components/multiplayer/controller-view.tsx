@@ -1,11 +1,11 @@
 // Controller View Component
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getPlayableCards, canDefendAgainstPick, canPlayCard } from '../../utils/whot-rules';
+import { canDefendAgainstPick, canPlayCard } from '../../utils/whot-rules';
 import { useGameConnection } from '../../utils/useGameConnection';
 import { useAnnouncer } from '../../utils/useAnnouncer';
-import { Card, CardShape } from '../../types/game';
+import { Card, CardShape, GameMessage } from '../../types/game';
 import { WhotCard } from '../card';
-import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Layers, Circle, Square, Triangle, Star, Grab, X as Cross, Trophy, MessageCircle, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Circle, Square, Triangle, Star, X as Cross, MessageCircle, Volume2, VolumeX } from 'lucide-react';
 import { WinnerOverlay } from './winner-overlay';
 
 interface ControllerViewProps {
@@ -23,16 +23,15 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     return newId;
   });
 
-  const handleMessage = useCallback((msg: any) => {
-    
-    if (msg.type === 'deal') {
-        if (msg.playerId === playerId) {
-            setHand(msg.cards);
-            setMessage('Game Started! Good Luck!');
-        }
+  const handleMessage = useCallback((msg: GameMessage) => {
+    const cards = msg.cards;
+
+    if (msg.type === 'deal' && msg.playerId === playerId && cards) {
+      setHand(cards);
+      setMessage('Game Started! Good Luck!');
     }
-    if (msg.type === 'draw' && msg.playerId === playerId) {
-        setHand(prev => [...prev, ...msg.cards]);
+    if (msg.type === 'draw' && msg.playerId === playerId && cards) {
+      setHand(prev => [...prev, ...cards]);
     }
   }, [playerId]);
 
@@ -63,27 +62,46 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
 
   // Chat State
   const [chatInput, setChatInput] = useState('');
-  const [isChatFocused, setIsChatFocused] = useState(false);
 
   // Voice Announcer (controlled by local mute toggle)
   const { play, playShapeCall } = useAnnouncer(!isMuted);
   const lastAnnouncedCard = useRef<string | null>(null);
   const lastAnnouncedWinner = useRef<string | null>(null);
+  const hasAttemptedStateFetch = useRef(false);
+
+  // Track when we last received any game state update (client time).
+  // Used for "fetch-before-act" to reduce stale actions without polling.
+  const lastStateReceivedAtMs = useRef<number>(0);
+
+  // Auto-resync tracking (to prevent duplicate fetches)
+  const lastResyncMs = useRef(0);
+  const RESYNC_DEBOUNCE_MS = 2000; // Minimum 2s between resyncs
 
   // Fetch current game state on mount (for reconnection)
   useEffect(() => {
-    if (isConnected && roomCode && !gameState) {
-        console.log('[Controller] Fetching game state on mount...');
-        fetchGameState(roomCode);
+    if (!isConnected) {
+      hasAttemptedStateFetch.current = false;
+      return;
     }
+
+    if (!roomCode || hasAttemptedStateFetch.current) return;
+    if (gameState) {
+      hasAttemptedStateFetch.current = true;
+      return;
+    }
+
+    hasAttemptedStateFetch.current = true;
+    console.log('[Controller] Fetching game state on mount...');
+    fetchGameState(roomCode);
   }, [isConnected, roomCode, gameState, fetchGameState]);
 
   useEffect(() => {
     if (gameState?.gameStarted && isJoined && hand.length === 0) {
-        // Initial fetch
+        // Initial fetch - fetchHand defined below, intentionally omitted from deps
         fetchHand();
     }
-  }, [gameState?.gameStarted, isJoined]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState?.gameStarted, isJoined, hand.length]);
 
   // Auto-Reconnect Logic
   useEffect(() => {
@@ -98,6 +116,45 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         }
     }
   }, [gameState, isJoined, playerId]);
+
+  // Update "last received" marker whenever gameState changes.
+  useEffect(() => {
+    if (!gameState) return;
+    lastStateReceivedAtMs.current = Date.now();
+  }, [gameState]);
+
+  // Auto-resync on visibility change and online event
+  useEffect(() => {
+    const resyncIfNeeded = () => {
+      // Only resync if game is started and we have a room
+      if (!gameState?.gameStarted || !roomCode) return;
+      
+      // Debounce: don't resync if we just did
+      if (Date.now() - lastResyncMs.current < RESYNC_DEBOUNCE_MS) return;
+      
+      lastResyncMs.current = Date.now();
+      console.log('[Controller] Auto-resyncing game state...');
+      fetchGameState(roomCode);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        resyncIfNeeded();
+      }
+    };
+
+    const handleOnline = () => {
+      resyncIfNeeded();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [gameState?.gameStarted, roomCode, fetchGameState]);
 
   // Derived game state
   const topCard = gameState?.currentCard;
@@ -143,14 +200,14 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     }
   }, [winner, play]);
 
-  const fetchHand = async () => {
-      try {
-          const cards = await getHand(roomCode, playerId);
-          setHand(cards);
-      } catch (e) {
-          console.error("Failed to fetch hand", e);
-      }
-  };
+  const fetchHand = useCallback(async () => {
+    try {
+      const cards = await getHand(roomCode, playerId);
+      setHand(cards);
+    } catch (e) {
+      console.error("Failed to fetch hand", e);
+    }
+  }, [getHand, roomCode, playerId]);
 
   const handleJoinGame = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,34 +218,51 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
       await joinGame(roomCode, playerName, playerId);
       setIsJoined(true);
       setMessage('Joined! Waiting for host to start...');
-    } catch (err: any) {
-      setMessage(`Failed to join: ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setMessage(`Failed to join: ${message}`);
     } finally {
       setLoading(false);
     }
   };
 
   const handlePlayCard = async (card: Card, shape: CardShape | null = null) => {
-    // If not my turn, ignore
-    if (!isMyTurn) return;
+    // Fetch-before-act: if we haven't received any state recently (>3s), resync first.
+    // This avoids manual refresh when a broadcast message is missed.
+    const staleThresholdMs = 3000;
+    let stateForAction = gameState;
+
+    const lastSeen = lastStateReceivedAtMs.current;
+    const isStale = lastSeen > 0 && (Date.now() - lastSeen > staleThresholdMs);
+    if (isStale) {
+      console.log('[Controller] State is stale, resyncing before play...');
+      const fetched = await fetchGameState(roomCode);
+      if (fetched) stateForAction = fetched;
+    }
+
+    const isMyTurnNow = stateForAction?.players[stateForAction.currentPlayerIndex]?.id === playerId;
+    if (!isMyTurnNow) {
+      setMessage('Not your turn.');
+      return;
+    }
 
     // BLOCK PLAY if General Market is active - MUST PICK
-    if (gameState?.effectActive === 'general_market') {
+    if (stateForAction?.effectActive === 'general_market') {
         setMessage("General Market! You must PICK a card.");
         if (navigator.vibrate) navigator.vibrate(200);
         return;
     }
 
     // Client-side Validation
-    if (gameState?.currentCard) {
+    if (stateForAction?.currentCard) {
         let isValid = false;
         
         // If defending against Pick Two/Three
-        if (gameState.effectActive === 'pick_two' || gameState.effectActive === 'pick_three') {
-            isValid = canDefendAgainstPick(card, gameState);
+      if (stateForAction.effectActive === 'pick_two' || stateForAction.effectActive === 'pick_three') {
+        isValid = canDefendAgainstPick(card, stateForAction);
         } else {
             // Correctly pass the globally selected shape (from previous Whot play)
-            isValid = canPlayCard(card, gameState.currentCard, gameState.selectedShape);
+        isValid = canPlayCard(card, stateForAction.currentCard, stateForAction.selectedShape);
         }
 
         if (!isValid) {
@@ -215,9 +289,10 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         setPendingCard(null);
         setShowShapePicker(false);
         setMessage("Card played!");
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("Play error", err);
-        setMessage(`Error: ${err.message}`);
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        setMessage(`Error: ${message}`);
     } finally {
         setLoading(false);
     }
@@ -229,8 +304,9 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
           await drawCardOnServer(roomCode, playerId);
           // Realtime broadcast will update hand
           setMessage("Drawing cards...");
-      } catch (err: any) {
-           setMessage(`Error drawing: ${err.message}`);
+      } catch (err: unknown) {
+           const message = err instanceof Error ? err.message : 'Unknown error';
+           setMessage(`Error drawing: ${message}`);
       } finally {
           setLoading(false);
       }
@@ -588,13 +664,11 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onFocus={(e) => {
-                setIsChatFocused(true);
                 // Scroll input into view when keyboard appears
                 setTimeout(() => {
                   e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }, 300);
               }}
-              onBlur={() => setIsChatFocused(false)}
               placeholder="Send a message..."
               className="flex-1 px-4 py-3 md:py-2 bg-black/30 border border-white/10 rounded-full text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/30"
               onKeyDown={(e) => {

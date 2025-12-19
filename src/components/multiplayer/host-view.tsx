@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { GameMessage } from '../../types/game';
 import { useGameConnection } from '../../utils/useGameConnection';
 import { useAnnouncer } from '../../utils/useAnnouncer';
+import { CONFETTI_COLORS } from '../../utils/theme-constants';
 import confetti from 'canvas-confetti';
 import { WhotCard } from '../card';
-import { QrCode, Copy, Trophy, Crown, AlertCircle, X, MessageCircle } from 'lucide-react';
+import { QrCode, Copy, Crown, AlertCircle, X, MessageCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WinnerOverlay } from './winner-overlay';
 
@@ -20,12 +22,17 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
   // Local state for Lobby (before game starts)
   const [localPlayers, setLocalPlayers] = useState<{id: string, name: string}[]>([]);
 
+  // Chat State
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{playerName: string; message: string; timestamp: number}[]>([]);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
   // Handle incoming messages (Join requests)
-  const handleMessage = useCallback((msg: any) => {
-      if (msg.type === 'join') {
+  const handleMessage = useCallback((msg: GameMessage) => {
+      if (msg.type === 'join' && msg.playerName) {
           setLocalPlayers(prev => {
               if (prev.find(p => p.id === msg.playerId)) return prev;
-              return [...prev, { id: msg.playerId, name: msg.playerName }];
+              return [...prev, { id: msg.playerId, name: msg.playerName! }];
           });
       }
       // Chat messages
@@ -35,28 +42,30 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
       if (msg.type === 'activate_chat') {
           setShowChat(true);
       }
-      if (msg.type === 'chat_message') {
+      if (msg.type === 'chat_message' && msg.playerName && msg.message) {
           setShowChat(true);
           setChatMessages(prev => [
               ...prev,
-              { playerName: msg.playerName, message: msg.message, timestamp: Date.now() }
+              { playerName: msg.playerName!, message: msg.message!, timestamp: Date.now() }
           ].slice(-20)); // Keep last 20 messages
       }
   }, []);
 
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
   const { 
     gameState, 
     isConnected, 
-    startGame: startGameOnServer, 
-    sendMessage
+    startGame: startGameOnServer
   } = useGameConnection(localRoomCode, handleMessage);
 
   const [message, setMessage] = useState('Waiting for players...');
   const [showQR, setShowQR] = useState(false);
-  
-  // Chat State
-  const [showChat, setShowChat] = useState(false);
-  const [chatMessages, setChatMessages] = useState<{playerName: string; message: string; timestamp: number}[]>([]);
   
   // Game state derived - Merge local lobby players with server game players
   const players = gameState?.players || localPlayers;
@@ -117,7 +126,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
         }
         break;
     }
-  }, [topCard, gameState?.selectedShape, play, playShapeCall]);
+  }, [topCard, gameState?.selectedShape, play, playShapeCall, winner]);
 
   // Announce winner with confetti and applause (Host and Spectator)
   useEffect(() => {
@@ -133,30 +142,38 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
         const applauseAudio = new Audio('/sounds/applause.mp3');
         applauseAudio.play().catch(() => {});
         
-        // Fire confetti celebration!
+        // Fire confetti celebration! (Optimized for performance)
         const fireConfetti = () => {
-          // Burst 1 (Left)
+          const defaults = {
+            disableForReducedMotion: true,
+            ticks: 150, // Faster fade-out
+            gravity: 1.2, // Fall faster
+            scalar: 0.9, // Slightly smaller particles
+            colors: [...CONFETTI_COLORS]
+          };
+          
+          // Burst from left
           confetti({
-            particleCount: 80,
+            ...defaults,
+            particleCount: 40,
             angle: 60,
-            spread: 55,
+            spread: 50,
             origin: { x: 0, y: 0.8 },
-            colors: ['#FFD700', '#FFA500', '#FF6347', '#00FF00', '#1E90FF']
           });
-          // Burst 2 (Right)
+          // Burst from right
           confetti({
-            particleCount: 80,
+            ...defaults,
+            particleCount: 40,
             angle: 120,
-            spread: 55,
+            spread: 50,
             origin: { x: 1, y: 0.8 },
-            colors: ['#FFD700', '#FFA500', '#FF6347', '#00FF00', '#1E90FF']
           });
         };
 
-        // Fire 5 distinct bursts over 2 seconds (much lighter on CPU than requestAnimationFrame)
+        // Fire 3 bursts over 1.2 seconds (fewer, more spaced out)
         fireConfetti();
-        const interval = setInterval(fireConfetti, 400);
-        setTimeout(() => clearInterval(interval), 2000);
+        const interval = setInterval(fireConfetti, 600);
+        setTimeout(() => clearInterval(interval), 1200);
       }, 1500);
     }
   }, [winner, play]);
@@ -172,27 +189,19 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
     }
   }, [gameState?.lastAction, play]);
 
-  // Effects for text messages
-  useEffect(() => {
-     if (gameState?.lastAction) {
-       setMessage(gameState.lastAction);
-     }
-  }, [gameState?.lastAction]);
-
-  useEffect(() => {
-      if (winner) {
-          setMessage(`WINNER! ${players.find(p => p.id === winner)?.name} has won the game!`);
-      }
-  }, [winner]);
+  const statusMessage = winner
+    ? `WINNER! ${players.find(p => p.id === winner)?.name} has won the game!`
+    : (gameState?.lastAction || message || 'Waiting for game to start...');
 
   const handleStartGame = async () => {
     if (players.length < 2) return;
     try {
       setMessage('Dealer is shuffling...');
       await startGameOnServer(localRoomCode, players);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Start failed", err);
-      setMessage(`Failed to start: ${err.message}`);
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setMessage(`Failed to start: ${msg}`);
     }
   };
 
@@ -267,7 +276,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
              ) : (
                 <div className="bg-black/60 backdrop-blur-md px-8 py-3 rounded-full border border-white/10 shadow-xl">
                     <p className="text-white/90 font-medium tracking-wide">
-                        {gameState?.lastAction || "Waiting for game to start..."}
+                  {statusMessage}
                     </p>
                 </div>
              )}
@@ -365,7 +374,6 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
               {players.map((player, idx) => {
                   const pos = getPlayerPosition(idx, players.length);
                   const isCurrent = idx === gameState.currentPlayerIndex;
-                  const cardCount = gameState.playerHands?.[player.id]?.length || 0;
 
                   return (
                       <div 
@@ -389,10 +397,10 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
                                )}
                                <span className="text-3xl font-black text-white">{player.name.charAt(0).toUpperCase()}</span>
                                
-                               {/* Card Count Badge */}
+                               {/* Session Wins Badge */}
                                <div className="absolute -right-2 -bottom-2 w-8 h-8 bg-red-600 rounded-full border-2 border-white flex items-center justify-center shadow-lg z-10">
                                    <span className="text-white font-bold text-sm">
-                                       {cardCount}
+                                       {gameState.sessionWins?.[player.id] || 0}
                                    </span>
                                </div>
                            </div>
@@ -402,14 +410,6 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
                                <span className={`text-sm font-bold uppercase tracking-wider ${isCurrent ? 'text-yellow-400' : 'text-white'}`}>
                                    {player.name}
                                </span>
-                           </div>
-
-                           {/* Hand visual (Just backs of cards fanned out small) */}
-                           <div className="absolute -z-10 -bottom-8 flex -space-x-4 opacity-80">
-                               {/* We assume we know count. Just show max 3-5 visual cards */}
-                               {[...Array(Math.min(5, cardCount))].map((_, i) => (
-                                   <div key={i} className="w-10 h-14 bg-red-900 rounded border border-white/20 shadow-md transform origin-bottom" style={{ transform: `rotate(${(i-2)*15}deg)` }}/>
-                               ))}
                            </div>
                       </div>
                   );
@@ -465,8 +465,8 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
 
       </div>
       
-      {/* Chat Panel (slides in from right) */}
-      <div className={`fixed right-0 top-0 bottom-0 w-80 bg-black/40 backdrop-blur-md border-l border-white/10 flex flex-col z-40 transition-transform duration-300 ${showChat ? 'translate-x-0' : 'translate-x-full'}`}>
+      {/* Chat Panel (slides in from right) - hidden when winner displayed */}
+      <div className={`fixed right-0 top-0 bottom-0 w-80 bg-black/40 backdrop-blur-md border-l border-white/10 flex flex-col z-40 transition-transform duration-300 ${showChat && !winner ? 'translate-x-0' : 'translate-x-full'}`}>
         {/* Chat Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/20">
           <div className="flex items-center gap-2">
@@ -481,22 +481,49 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
           </button>
         </div>
         
-        {/* Chat Messages (bottom-to-top flow) */}
-        <div className="flex-1 overflow-y-auto flex flex-col-reverse p-4 gap-2">
-          {chatMessages.slice().reverse().map((msg, index) => (
-            <div 
-              key={`${msg.timestamp}-${index}`}
-              className="animate-in slide-in-from-bottom-2 fade-in duration-300"
-            >
-              <span className="text-yellow-400 font-bold text-sm">{msg.playerName}</span>
-              <span className="text-white/80 text-sm ml-2">{msg.message}</span>
-            </div>
-          ))}
+        {/* Chat Messages with auto-scroll */}
+        <div 
+          ref={chatScrollRef}
+          className="flex-1 overflow-y-auto p-4 space-y-1"
+        >
           {chatMessages.length === 0 && (
-            <div className="text-white/30 text-sm text-center">
+            <div className="text-white/30 text-sm text-center py-8">
               No messages yet...
             </div>
           )}
+          {chatMessages.map((msg, index) => {
+            const prevMsg = chatMessages[index - 1];
+            const isFirstInGroup = !prevMsg || prevMsg.playerName !== msg.playerName || 
+              (msg.timestamp - prevMsg.timestamp > 60000); // New group if >1min apart
+            const isOwnMessage = msg.playerName === 'Host'; // Host's messages (adjust if needed)
+            
+            return (
+              <div 
+                key={`${msg.timestamp}-${index}`}
+                className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 fade-in duration-300`}
+              >
+                <div className={`max-w-[85%] ${isOwnMessage ? 'items-end' : 'items-start'}`}>
+                  {/* Show name only for first message in group */}
+                  {isFirstInGroup && (
+                    <div className={`flex items-center gap-2 text-xs px-2 mb-1 ${isOwnMessage ? 'justify-end' : ''}`}>
+                      <span className="font-medium text-yellow-400">{msg.playerName}</span>
+                      <span className="text-white/40">
+                        {new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  )}
+                  {/* Message bubble */}
+                  <div className={`py-2 px-3 rounded-xl text-sm ${
+                    isOwnMessage 
+                      ? 'bg-yellow-500/20 text-yellow-100 border border-yellow-500/30' 
+                      : 'bg-white/10 text-white/90 border border-white/10'
+                  }`}>
+                    {msg.message}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
         
         {/* Privacy Footnote */}

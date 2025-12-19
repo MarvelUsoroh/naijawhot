@@ -1,4 +1,4 @@
-import { Card, CardShape, CardNumber, GameState, Player } from '../types/game';
+import { Card, CardShape, CardNumber, GameState } from '../types/game';
 
 /**
  * Nigerian Whot Card Composition (54 cards total)
@@ -153,7 +153,7 @@ export function applyCardEffect(
       newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
       break;
 
-    case 'suspension':
+    case 'suspension': {
       const skips = 1;
 
       newState.lastAction = `${state.players[playerIndex].name} played SUSPENSION! Next ${skips} player${skips > 1 ? 's' : ''} skip turn`;
@@ -163,6 +163,7 @@ export function applyCardEffect(
         newState.currentPlayerIndex = getNextPlayerIndex(newState.currentPlayerIndex, state.players.length);
       }
       break;
+    }
 
     case 'general_market':
       newState.lastAction = `${state.players[playerIndex].name} played GENERAL MARKET! All others draw 1 card`;
@@ -240,7 +241,8 @@ export function mustDrawCards(state: GameState, playerId: string): number {
 /**
  * Check if player can defend against Pick Two/Three with their own
  */
-export function canDefendAgainstPick(card: Card, state: GameState): boolean {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function canDefendAgainstPick(_card: Card, _state: GameState): boolean {
   // STRICT RULE CHANGE: No Defense allowed. 
   return false;
 }

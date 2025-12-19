@@ -65,6 +65,13 @@
   --whot-status-success: #4CAF50;
   --whot-status-warning: #FF9800;
   --whot-status-error: #F44336;
+
+  /* Celebration Confetti Colors */
+  --whot-confetti-gold: #FFD700;
+  --whot-confetti-orange: #FFA500;
+  --whot-confetti-red: #FF6347;
+  --whot-confetti-green: #00FF00;
+  --whot-confetti-blue: #1E90FF;
 }
 
 .dark {

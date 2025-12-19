@@ -39,6 +39,7 @@ export interface GameState {
   marketPile: Card[]; // Remaining cards in the deck (draw pile)
   discardPile: Card[]; // Cards that have been played
   playerHands: Record<string, Card[]>; // Map of playerId -> their private hand
+  sessionWins?: Record<string, number>; // Wins per player during room session
 }
 
 export interface GameMessage {

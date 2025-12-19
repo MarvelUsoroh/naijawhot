@@ -157,8 +157,15 @@ app.post("*/game/start", async (c) => {
       return c.json({ error: "Invalid room code or not enough players" }, 400);
     }
 
+    // Fetch existing session wins (for "Play Again" scenarios)
+    const existingState = await getGameState(roomCode);
+    const sessionWins = existingState?.sessionWins || {};
+
     // Create new Game State
     const initialState = createInitialGameState(roomCode, players);
+    
+    // Preserve session wins from previous games
+    initialState.sessionWins = sessionWins;
 
     // Save to DB
     await saveGameState(roomCode, initialState);
@@ -307,6 +314,10 @@ app.post("*/game/play-card", async (c) => {
 
     if (remainingCards === 0) {
       updatedState.winner = playerId;
+      
+      // Increment session wins for this player
+      if (!updatedState.sessionWins) updatedState.sessionWins = {};
+      updatedState.sessionWins[playerId] = (updatedState.sessionWins[playerId] || 0) + 1;
       
       // Calculate Scores
       const scores = updatedState.players.map(p => {

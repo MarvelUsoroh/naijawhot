@@ -1,8 +1,5 @@
-import { Card, CardShape, CardNumber } from '../types/game';
+import { Card, CardShape } from '../types/game';
 import { createWhotDeck, canPlayCard as whotCanPlayCard } from './whot-rules';
-
-const SHAPES: CardShape[] = ['circle', 'square', 'triangle', 'star', 'cross'];
-const NUMBERS: CardNumber[] = [1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14, 20];
 
 export function generateRoomCode(): string {
   return Math.floor(1000 + Math.random() * 9000).toString();
