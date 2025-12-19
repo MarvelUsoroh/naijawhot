@@ -69,14 +69,6 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   const lastAnnouncedWinner = useRef<string | null>(null);
   const hasAttemptedStateFetch = useRef(false);
 
-  // Track when we last received any game state update (client time).
-  // Used for "fetch-before-act" to reduce stale actions without polling.
-  const lastStateReceivedAtMs = useRef<number>(0);
-
-  // Auto-resync tracking (to prevent duplicate fetches)
-  const lastResyncMs = useRef(0);
-  const RESYNC_DEBOUNCE_MS = 2000; // Minimum 2s between resyncs
-
   // Fetch current game state on mount (for reconnection)
   useEffect(() => {
     if (!isConnected) {
@@ -116,45 +108,6 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
         }
     }
   }, [gameState, isJoined, playerId]);
-
-  // Update "last received" marker whenever gameState changes.
-  useEffect(() => {
-    if (!gameState) return;
-    lastStateReceivedAtMs.current = Date.now();
-  }, [gameState]);
-
-  // Auto-resync on visibility change and online event
-  useEffect(() => {
-    const resyncIfNeeded = () => {
-      // Only resync if game is started and we have a room
-      if (!gameState?.gameStarted || !roomCode) return;
-      
-      // Debounce: don't resync if we just did
-      if (Date.now() - lastResyncMs.current < RESYNC_DEBOUNCE_MS) return;
-      
-      lastResyncMs.current = Date.now();
-      console.log('[Controller] Auto-resyncing game state...');
-      fetchGameState(roomCode);
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        resyncIfNeeded();
-      }
-    };
-
-    const handleOnline = () => {
-      resyncIfNeeded();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('online', handleOnline);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('online', handleOnline);
-    };
-  }, [gameState?.gameStarted, roomCode, fetchGameState]);
 
   // Derived game state
   const topCard = gameState?.currentCard;
@@ -227,42 +180,29 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   };
 
   const handlePlayCard = async (card: Card, shape: CardShape | null = null) => {
-    // Fetch-before-act: if we haven't received any state recently (>3s), resync first.
-    // This avoids manual refresh when a broadcast message is missed.
-    const staleThresholdMs = 3000;
-    let stateForAction = gameState;
-
-    const lastSeen = lastStateReceivedAtMs.current;
-    const isStale = lastSeen > 0 && (Date.now() - lastSeen > staleThresholdMs);
-    if (isStale) {
-      console.log('[Controller] State is stale, resyncing before play...');
-      const fetched = await fetchGameState(roomCode);
-      if (fetched) stateForAction = fetched;
-    }
-
-    const isMyTurnNow = stateForAction?.players[stateForAction.currentPlayerIndex]?.id === playerId;
+    const isMyTurnNow = gameState?.players[gameState.currentPlayerIndex]?.id === playerId;
     if (!isMyTurnNow) {
       setMessage('Not your turn.');
       return;
     }
 
     // BLOCK PLAY if General Market is active - MUST PICK
-    if (stateForAction?.effectActive === 'general_market') {
+    if (gameState?.effectActive === 'general_market') {
         setMessage("General Market! You must PICK a card.");
         if (navigator.vibrate) navigator.vibrate(200);
         return;
     }
 
     // Client-side Validation
-    if (stateForAction?.currentCard) {
+    if (gameState?.currentCard) {
         let isValid = false;
         
         // If defending against Pick Two/Three
-      if (stateForAction.effectActive === 'pick_two' || stateForAction.effectActive === 'pick_three') {
-        isValid = canDefendAgainstPick(card, stateForAction);
+      if (gameState.effectActive === 'pick_two' || gameState.effectActive === 'pick_three') {
+        isValid = canDefendAgainstPick(card, gameState);
         } else {
             // Correctly pass the globally selected shape (from previous Whot play)
-        isValid = canPlayCard(card, stateForAction.currentCard, stateForAction.selectedShape);
+        isValid = canPlayCard(card, gameState.currentCard, gameState.selectedShape);
         }
 
         if (!isValid) {
