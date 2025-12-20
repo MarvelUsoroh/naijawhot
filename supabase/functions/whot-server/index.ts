@@ -1,7 +1,7 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { GameState, GameMessage, Card, Player } from "../_shared/game-types.ts";
+import { GameState, GameMessage, Card, Player, GameRules, DEFAULT_RULES } from "../_shared/game-types.ts";
 import { 
   createDeck, 
   dealCards, 
@@ -16,7 +16,7 @@ import {
   createInitialGameState
 } from "../_shared/whot-rules.ts";
 
-// Production build: 2025-12-17
+// Production build: 2025-12-19 - Rules Update
 
 const app = new Hono();
 
@@ -151,7 +151,7 @@ function updateSession(roomCode: string, updates: Record<string, any>) {
 
 app.post("*/game/start", async (c) => {
   try {
-    const { roomCode, players } = await c.req.json();
+    const { roomCode, players, rules } = await c.req.json();
     
     if (!roomCode || !players || players.length < 2) {
       return c.json({ error: "Invalid room code or not enough players" }, 400);
@@ -161,8 +161,8 @@ app.post("*/game/start", async (c) => {
     const existingState = await getGameState(roomCode);
     const sessionWins = existingState?.sessionWins || {};
 
-    // Create new Game State
-    const initialState = createInitialGameState(roomCode, players);
+    // Create new Game State with rules
+    const initialState = createInitialGameState(roomCode, players, rules);
     
     // Preserve session wins from previous games
     initialState.sessionWins = sessionWins;
@@ -260,16 +260,21 @@ app.post("*/game/play-card", async (c) => {
         return c.json({ error: "Card not in hand" }, 400);
     }
 
+    const rules = state.rules || DEFAULT_RULES;
+
+    // Check for Effect Restrictions (Pick Two/Three)
+    if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
+       // Check if defending is allowed and card can defend
+       if (rules.defendPick && canDefendAgainstPick(card, state)) {
+         // Allow the play - it's a valid defense
+       } else {
+         // Must draw, cannot play
+         return c.json({ error: "Must draw cards (Market Penalties active)" }, 400);
+       }
+    }
+
     // Validate Move Rules strictly
     const isValid = canPlayCard(card, state.currentCard!, state.selectedShape);
-    
-    // Check for Effect Restrictions (Pick Two/Three CANNOT be defended anymore)
-    if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
-       // If Pick Effect is active, player MUST draw. They cannot play ANY card.
-       // The exception is handled by the 'draw' endpoint.
-       // So if they try to play a card here, it's ILLEGAL immediately.
-       return c.json({ error: "Must draw cards (Market Penalties active)" }, 400);
-    }
 
     if (!isValid) {
       return c.json({ error: "Invalid move: Card does not match shape or number" }, 400);
@@ -286,8 +291,17 @@ app.post("*/game/play-card", async (c) => {
     if (selectedShape) state.selectedShape = selectedShape; // Handle Whot shape selection
     else state.selectedShape = null;
 
+    // Lock rules after first card is played
+    if (!state.rulesLocked) {
+      state.rulesLocked = true;
+    }
+    state.totalTurns = (state.totalTurns || 0) + 1;
+
     // Apply Effects & Next Turn
     const updatedState = applyCardEffect(state, card, playerId);
+    
+    // Update turn start time
+    updatedState.turnStartTime = Date.now();
 
     // GENERAL MARKET: Initialize Manual Queue
     if (updatedState.effectActive === 'general_market') {
@@ -313,28 +327,39 @@ app.post("*/game/play-card", async (c) => {
     const playerName = updatedState.players[playerIndex].name;
 
     if (remainingCards === 0) {
-      updatedState.winner = playerId;
-      
-      // Increment session wins for this player
-      if (!updatedState.sessionWins) updatedState.sessionWins = {};
-      updatedState.sessionWins[playerId] = (updatedState.sessionWins[playerId] || 0) + 1;
-      
-      // Calculate Scores
-      const scores = updatedState.players.map(p => {
-          const score = calculateScore(updatedState.playerHands[p.id] || []);
-          return `${p.name}: ${score}`;
-      }).join(', ');
-      
-      updatedState.lastAction = `Final Scores: ${scores}`;
-      updatedState.gameStarted = false;
-      
-      // Analytics: Log win and end session (fire-and-forget)
-      logPlayerEvent(roomCode, playerId, playerName, 'win', { scores });
-      updateSession(roomCode, { 
-        ended_at: new Date().toISOString(), 
-        winner_id: playerId, 
-        winner_name: playerName 
-      });
+      // Check Hold On win rule
+      // If card is Hold On (1) and winWithHoldOn is disabled, player must draw instead
+      if (card.number === 1 && !rules.winWithHoldOn) {
+        // Player played Hold On as last card but can't win with it
+        // They get their bonus turn but have no cards, so must draw
+        // Don't declare winner - they'll draw on their bonus turn
+        updatedState.lastAction = `${playerName} played HOLD ON but can't win with it!`;
+        // Don't set winner - the Hold On effect keeps turn with them, they'll have to draw
+      } else {
+        // Valid win!
+        updatedState.winner = playerId;
+        
+        // Increment session wins for this player
+        if (!updatedState.sessionWins) updatedState.sessionWins = {};
+        updatedState.sessionWins[playerId] = (updatedState.sessionWins[playerId] || 0) + 1;
+        
+        // Calculate Scores
+        const scores = updatedState.players.map(p => {
+            const score = calculateScore(updatedState.playerHands[p.id] || []);
+            return `${p.name}: ${score}`;
+        }).join(', ');
+        
+        updatedState.lastAction = `Final Scores: ${scores}`;
+        updatedState.gameStarted = false;
+        
+        // Analytics: Log win and end session (fire-and-forget)
+        logPlayerEvent(roomCode, playerId, playerName, 'win', { scores });
+        updateSession(roomCode, { 
+          ended_at: new Date().toISOString(), 
+          winner_id: playerId, 
+          winner_name: playerName 
+        });
+      }
     } else if (remainingCards === 1) {
         // Last Card Warning
         updatedState.lastAction = `${playerName} is on last card!`;
@@ -485,7 +510,10 @@ app.post("*/game/draw", async (c) => {
       state.deckCount = state.marketPile.length;
       if (!state.effectActive) {
           state.lastAction = `${state.players[playerIndex].name} picked ${drawnCards.length} cards`; 
-      } 
+      }
+      
+      // Update turn start time for next player
+      state.turnStartTime = Date.now(); 
   
       // Parallelize Save and Broadcasts
       const savePromise = saveGameState(roomCode, state);
@@ -531,6 +559,240 @@ app.post("*/game/get-hand", async (c) => {
         return c.json({error: e.message}, 500);
     }
 });
+
+// Update game rules (only before first action)
+app.post("*/game/update-rules", async (c) => {
+    try {
+        const { roomCode, playerId, playerName, rules } = await c.req.json();
+        const state = await getGameState(roomCode);
+        if (!state) return c.json({ error: "Game not found" }, 404);
+        
+        // Check if rules are locked
+        if (state.rulesLocked) {
+            return c.json({ error: "Rules are locked after first card is played" }, 400);
+        }
+        
+        // Merge new rules with existing
+        state.rules = {
+            ...state.rules,
+            ...rules
+        };
+        
+        // Save and broadcast
+        await saveGameState(roomCode, state);
+        
+        const publicState = {
+            ...state,
+            playerHands: {},
+            marketPile: [],
+        };
+        
+        await broadcast(roomCode, "game-message", {
+            type: "rules_update",
+            playerId,
+            playerName,
+            rules: state.rules,
+            gameState: publicState
+        });
+        
+        return c.json({ success: true, rules: state.rules });
+    } catch(e) {
+        return c.json({ error: e.message }, 500);
+    }
+});
+
+// Auto-play endpoint (called when timer expires)
+app.post("*/game/auto-play", async (c) => {
+    try {
+        const { roomCode, playerId } = await c.req.json();
+        const state = await getGameState(roomCode);
+        if (!state) return c.json({ error: "Game not found" }, 404);
+        if (state.winner) return c.json({ error: "Game is over" }, 400);
+        
+        const playerIndex = state.players.findIndex(p => p.id === playerId);
+        if (playerIndex !== state.currentPlayerIndex) {
+            return c.json({ error: "Not this player's turn" }, 400);
+        }
+        
+        const hand = state.playerHands[playerId] || [];
+        const playerName = state.players[playerIndex].name;
+        
+        // Check if there's a penalty active - must draw
+        if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three' || state.effectActive === 'general_market') {
+            // Auto-draw
+            let drawCount = 1;
+            if (state.effectActive === 'pick_two') drawCount = state.pickTwoChain * 2;
+            else if (state.effectActive === 'pick_three') drawCount = state.pickThreeChain * 3;
+            
+            const drawnCards: Card[] = [];
+            for (let i = 0; i < drawCount; i++) {
+                if (state.marketPile.length === 0) {
+                    if (state.discardPile.length > 1) {
+                        const topCard = state.discardPile.pop()!;
+                        state.marketPile = shuffleDeck([...state.discardPile]);
+                        state.discardPile = [topCard];
+                    } else break;
+                }
+                if (state.marketPile.length > 0) {
+                    drawnCards.push(state.marketPile.shift()!);
+                }
+            }
+            
+            state.playerHands[playerId] = [...hand, ...drawnCards];
+            state.players[playerIndex].cardCount = state.playerHands[playerId].length;
+            
+            // Handle General Market queue
+            if (state.effectActive === 'general_market') {
+                state.marketDue = state.marketDue?.filter(id => id !== playerId) || [];
+                if (state.marketDue.length === 0) {
+                    const initiatorIndex = state.players.findIndex(p => p.id === state.generalMarketInitiator);
+                    if (initiatorIndex !== -1) state.currentPlayerIndex = initiatorIndex;
+                    state.effectActive = null;
+                    state.generalMarketInitiator = undefined;
+                } else {
+                    const nextId = state.marketDue[0];
+                    const nextIndex = state.players.findIndex(p => p.id === nextId);
+                    if (nextIndex !== -1) state.currentPlayerIndex = nextIndex;
+                }
+            } else {
+                state.effectActive = null;
+                state.pickTwoChain = 0;
+                state.pickThreeChain = 0;
+                state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
+            }
+            
+            state.deckCount = state.marketPile.length;
+            state.lastAction = `⏱️ ${playerName} timed out - auto-drew ${drawnCards.length} cards`;
+            state.turnStartTime = Date.now();
+            
+            await saveGameState(roomCode, state);
+            
+            await broadcast(roomCode, "game-message", {
+                type: "draw",
+                playerId,
+                count: drawnCards.length,
+                cards: drawnCards
+            });
+            
+            const publicState = { ...state, playerHands: {}, marketPile: [] };
+            await broadcast(roomCode, "game-message", {
+                type: "state_sync",
+                playerId: "server",
+                gameState: publicState
+            });
+            
+            return c.json({ success: true, action: 'draw', count: drawnCards.length });
+        }
+        
+        // Try to find a playable card
+        const playableCards = getPlayableCards(hand, state.currentCard!, state.selectedShape, state);
+        
+        if (playableCards.length > 0) {
+            // Play the first valid card (simplest auto-play)
+            const cardToPlay = playableCards[0];
+            
+            // Remove from hand
+            state.playerHands[playerId] = hand.filter(c => c.id !== cardToPlay.id);
+            state.players[playerIndex].cardCount = state.playerHands[playerId].length;
+            
+            // Update game state
+            state.currentCard = cardToPlay;
+            state.discardPile.push(cardToPlay);
+            state.selectedShape = null;
+            
+            // For Whot card, pick a random shape
+            let autoSelectedShape = null;
+            if (cardToPlay.number === 20) {
+                const shapes = ['circle', 'triangle', 'cross', 'square', 'star'] as const;
+                autoSelectedShape = shapes[Math.floor(Math.random() * shapes.length)];
+                state.selectedShape = autoSelectedShape;
+            }
+            
+            // Apply effects
+            const updatedState = applyCardEffect(state, cardToPlay, playerId);
+            updatedState.turnStartTime = Date.now();
+            updatedState.rulesLocked = true;
+            updatedState.totalTurns = (updatedState.totalTurns || 0) + 1;
+            
+            // Check for win
+            if (updatedState.playerHands[playerId].length === 0) {
+                const rules = updatedState.rules || DEFAULT_RULES;
+                if (cardToPlay.number === 1 && !rules.winWithHoldOn) {
+                    updatedState.lastAction = `⏱️ ${playerName} timed out - auto-played Hold On but can't win with it!`;
+                } else {
+                    updatedState.winner = playerId;
+                    if (!updatedState.sessionWins) updatedState.sessionWins = {};
+                    updatedState.sessionWins[playerId] = (updatedState.sessionWins[playerId] || 0) + 1;
+                    updatedState.lastAction = `⏱️ ${playerName} timed out but auto-played to WIN!`;
+                    updatedState.gameStarted = false;
+                }
+            } else {
+                updatedState.lastAction = `⏱️ ${playerName} timed out - auto-played ${cardToPlay.shape} ${cardToPlay.number}`;
+            }
+            
+            await saveGameState(roomCode, updatedState);
+            
+            const publicState = { ...updatedState, playerHands: {}, marketPile: [] };
+            await broadcast(roomCode, "game-message", {
+                type: "card_played",
+                playerId,
+                card: cardToPlay,
+                selectedShape: autoSelectedShape,
+                gameState: publicState
+            });
+            await broadcast(roomCode, "game-message", {
+                type: "state_sync",
+                playerId: "server",
+                gameState: publicState
+            });
+            
+            return c.json({ success: true, action: 'play', card: cardToPlay });
+        } else {
+            // No playable cards - draw one
+            if (state.marketPile.length === 0) {
+                if (state.discardPile.length > 1) {
+                    const topCard = state.discardPile.pop()!;
+                    state.marketPile = shuffleDeck([...state.discardPile]);
+                    state.discardPile = [topCard];
+                }
+            }
+            
+            const drawnCards: Card[] = [];
+            if (state.marketPile.length > 0) {
+                drawnCards.push(state.marketPile.shift()!);
+            }
+            
+            state.playerHands[playerId] = [...hand, ...drawnCards];
+            state.players[playerIndex].cardCount = state.playerHands[playerId].length;
+            state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
+            state.deckCount = state.marketPile.length;
+            state.lastAction = `⏱️ ${playerName} timed out - auto-drew 1 card`;
+            state.turnStartTime = Date.now();
+            
+            await saveGameState(roomCode, state);
+            
+            await broadcast(roomCode, "game-message", {
+                type: "draw",
+                playerId,
+                count: 1,
+                cards: drawnCards
+            });
+            
+            const publicState = { ...state, playerHands: {}, marketPile: [] };
+            await broadcast(roomCode, "game-message", {
+                type: "state_sync",
+                playerId: "server",
+                gameState: publicState
+            });
+            
+            return c.json({ success: true, action: 'draw', count: 1 });
+        }
+    } catch(e) {
+        console.error("Auto-play error:", e);
+        return c.json({ error: e.message }, 500);
+    }
+});
+
 app.notFound((c: any) => {
   return c.json({ 
     error: `Route not found: ${c.req.path}`, 

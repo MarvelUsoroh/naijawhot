@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { GameMessage } from '../../types/game';
+import { GameMessage, GameRules, DEFAULT_RULES } from '../../types/game';
 import { useGameConnection } from '../../utils/useGameConnection';
-import { useAnnouncer } from '../../utils/useAnnouncer';
+import { useYarnGPT } from '../../utils/useYarnGPT';
 import { CONFETTI_COLORS } from '../../utils/theme-constants';
 import confetti from 'canvas-confetti';
 import { WhotCard } from '../card';
-import { QrCode, Copy, Crown, AlertCircle, X, MessageCircle } from 'lucide-react';
+import { QrCode, Copy, Crown, AlertCircle, X, MessageCircle, Settings, Info } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WinnerOverlay } from './winner-overlay';
 
@@ -26,6 +26,11 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
   const [showChat, setShowChat] = useState(false);
   const [chatMessages, setChatMessages] = useState<{playerName: string; message: string; timestamp: number}[]>([]);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Rules Configuration State
+  const [rules, setRules] = useState<GameRules>({ ...DEFAULT_RULES });
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [showRulesInfo, setShowRulesInfo] = useState(false);
 
   // Handle incoming messages (Join requests)
   const handleMessage = useCallback((msg: GameMessage) => {
@@ -48,6 +53,10 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
               ...prev,
               { playerName: msg.playerName!, message: msg.message!, timestamp: Date.now() }
           ].slice(-20)); // Keep last 20 messages
+      }
+      // Rules updates from other players
+      if (msg.type === 'rules_update' && msg.rules) {
+          setRules(prev => ({ ...prev, ...msg.rules }));
       }
   }, []);
 
@@ -73,14 +82,24 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
   const winner = gameState?.winner;
 
   // Voice Announcer (Host always plays sounds)
-  const { play, playShapeCall } = useAnnouncer(true);
+  const { play, preload } = useYarnGPT(true);
   const lastAnnouncedCard = useRef<string | null>(null);
   const lastAnnouncedWinner = useRef<string | null>(null);
   const pendingContinue = useRef<boolean>(false); // Track if we need to announce "Continue" after next play
 
+  // Preload common phrases
+  useEffect(() => {
+    preload([
+      "Oya Pick Two!", "Oya Pick Three!", "Go to market my friend!", "Hold On!", 
+      "Suspension!", "Check Up!", "Last Card oo!", "Continue!",
+      "I need Circle!", "I need Square!", "I need Triangle!", "I need Star!", "I need Cross!",
+      "Warning! Two cards left!" 
+    ]);
+  }, [preload]);
+
   // Announce power cards and game events
   useEffect(() => {
-    if (!topCard) return;
+    if (!topCard || winner) return;
     
     const cardKey = `${topCard.shape}-${topCard.number}`;
     
@@ -93,7 +112,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
       // Only announce "Continue" if the follow-up card is NOT a power card
       const isPowerCard = [1, 2, 5, 8, 14, 20].includes(topCard.number);
       if (!isPowerCard) {
-        setTimeout(() => play('continue'), 1500);
+        setTimeout(() => play('Continue!'), 1500);
       }
     }
     pendingContinue.current = false; // Always clear, whether we played or not
@@ -101,32 +120,41 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
     lastAnnouncedCard.current = cardKey;
 
     // Trigger sound based on card number
+    const rules = gameState?.rules;
+    
     switch (topCard.number) {
       case 2:
-        play('pick_two');
+        // Only announce Pick Two if the rule is enabled
+        if (rules?.pickTwo) {
+          play('Oya Pick Two!');
+        }
         break;
       case 5:
-        play('pick_three');
+        // Only announce Pick Three if the rule is enabled
+        if (rules?.pickThree) {
+          play('Oya Pick Three!');
+        }
         break;
       case 14:
-        play('general_market');
+        play('Go to market my friend!');
         pendingContinue.current = true; // Set flag to announce "Continue" on next play
         break;
       case 1:
-        play('hold_on');
+        play('Hold On!');
         pendingContinue.current = true; // Set flag to announce "Continue" on next play
         break;
       case 8:
-        play('suspension');
+        play('Suspension!');
         break;
       case 20:
         // For Whot card, announce the selected shape
         if (gameState?.selectedShape) {
-          playShapeCall(gameState.selectedShape);
+          const shape = gameState.selectedShape.charAt(0).toUpperCase() + gameState.selectedShape.slice(1);
+          play(`I need ${shape}!`);
         }
         break;
     }
-  }, [topCard, gameState?.selectedShape, play, playShapeCall, winner]);
+  }, [topCard, gameState?.selectedShape, gameState?.rules, play, winner]);
 
   // Announce winner with confetti and applause (Host and Spectator)
   useEffect(() => {
@@ -134,7 +162,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
       lastAnnouncedWinner.current = winner;
       
       // Play check_up announcement
-      play('check_up');
+      play('Check Up!');
       
       // After check_up (~1.5s), play applause and fire confetti
       setTimeout(() => {
@@ -180,14 +208,22 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
 
   // Announce last card warnings (delayed so power card announcement plays first)
   useEffect(() => {
+    if (winner) return;
+
     const action = gameState?.lastAction?.toLowerCase() || '';
+    let timeoutId: number | undefined;
+
     if (action.includes('last card')) {
       // Delay to let power card announcement play first
-      setTimeout(() => play('last_card'), 1500);
+      timeoutId = setTimeout(() => play('Last Card oo!'), 2500);
     } else if (action.includes('warning') && action.includes('two cards')) {
-      setTimeout(() => play('warning'), 1500);
+      timeoutId = setTimeout(() => play('Warning! Two cards left!'), 2500);
     }
-  }, [gameState?.lastAction, play]);
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [gameState?.lastAction, play, winner]);
 
   const statusMessage = winner
     ? `WINNER! ${players.find(p => p.id === winner)?.name} has won the game!`
@@ -197,7 +233,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
     if (players.length < 2) return;
     try {
       setMessage('Dealer is shuffling...');
-      await startGameOnServer(localRoomCode, players);
+      await startGameOnServer(localRoomCode, players, rules);
     } catch (err: unknown) {
       console.error("Start failed", err);
       const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -351,13 +387,24 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
                       </div>
 
                       {!isSpectator ? (
-                        <button
-                            onClick={handleStartGame}
-                            disabled={players.length < 2 || !isConnected}
-                            className="w-full py-4 bg-yellow-400 text-black font-black text-xl rounded-xl hover:bg-yellow-300 disabled:opacity-50 disabled:grayscale transition-all shadow-lg hover:shadow-yellow-400/20"
-                        >
-                            START MATCH
-                        </button>
+                        <>
+                          {/* Rules Configuration Button */}
+                          <button
+                              onClick={() => setShowRulesModal(true)}
+                              className="w-full py-3 mb-3 bg-white/10 hover:bg-white/20 text-white font-bold text-lg rounded-xl transition-all border border-white/20 flex items-center justify-center gap-2"
+                          >
+                              <Settings className="w-5 h-5" />
+                              Set Rules
+                          </button>
+                          
+                          <button
+                              onClick={handleStartGame}
+                              disabled={players.length < 2 || !isConnected}
+                              className="w-full py-4 bg-yellow-400 text-black font-black text-xl rounded-xl hover:bg-yellow-300 disabled:opacity-50 disabled:grayscale transition-all shadow-lg hover:shadow-yellow-400/20"
+                          >
+                              START MATCH
+                          </button>
+                        </>
                       ) : (
                         <div className="w-full py-4 bg-purple-500/30 text-purple-200 font-bold text-lg rounded-xl text-center border border-purple-500/50">
                             👁️ Waiting for host to start...
@@ -533,6 +580,157 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
           </p>
         </div>
       </div>
+
+      {/* Rules Configuration Modal */}
+      {showRulesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setShowRulesModal(false)}>
+          <div className="bg-gray-900 p-6 md:p-8 rounded-2xl shadow-2xl max-w-md w-full mx-4 border border-white/10" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-2xl font-black text-white flex items-center gap-2">
+                <Settings className="w-6 h-6 text-yellow-400" />
+                Game Rules
+              </h3>
+              <button onClick={() => setShowRulesModal(false)} className="text-white/50 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* Pick Two */}
+              <label className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 cursor-pointer hover:bg-white/10 transition-all">
+                <div>
+                  <span className="text-white font-bold">Pick Two (Card 2)</span>
+                  <p className="text-white/50 text-sm">Next player draws 2 cards</p>
+                </div>
+                <input 
+                  type="checkbox" 
+                  checked={rules.pickTwo} 
+                  onChange={(e) => setRules(prev => ({ ...prev, pickTwo: e.target.checked }))}
+                  className="w-5 h-5 accent-yellow-400"
+                />
+              </label>
+              
+              {/* Pick Three */}
+              <label className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 cursor-pointer hover:bg-white/10 transition-all">
+                <div>
+                  <span className="text-white font-bold">Pick Three (Card 5)</span>
+                  <p className="text-white/50 text-sm">Next player draws 3 cards</p>
+                </div>
+                <input 
+                  type="checkbox" 
+                  checked={rules.pickThree} 
+                  onChange={(e) => setRules(prev => ({ ...prev, pickThree: e.target.checked }))}
+                  className="w-5 h-5 accent-yellow-400"
+                />
+              </label>
+              
+              {/* Defend Pick */}
+              <label className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 cursor-pointer hover:bg-white/10 transition-all">
+                <div>
+                  <span className="text-white font-bold">Defend Pick 2/3</span>
+                  <p className="text-white/50 text-sm">Counter with another Pick card (stacking)</p>
+                </div>
+                <input 
+                  type="checkbox" 
+                  checked={rules.defendPick} 
+                  onChange={(e) => setRules(prev => ({ ...prev, defendPick: e.target.checked }))}
+                  className="w-5 h-5 accent-yellow-400"
+                />
+              </label>
+              
+              {/* Win with Hold On */}
+              <label className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 cursor-pointer hover:bg-white/10 transition-all">
+                <div>
+                  <span className="text-white font-bold">Win with Hold On</span>
+                  <p className="text-white/50 text-sm">Can win by playing card 1 as last card</p>
+                </div>
+                <input 
+                  type="checkbox" 
+                  checked={rules.winWithHoldOn} 
+                  onChange={(e) => setRules(prev => ({ ...prev, winWithHoldOn: e.target.checked }))}
+                  className="w-5 h-5 accent-yellow-400"
+                />
+              </label>
+            </div>
+            
+            <div className="mt-6 flex gap-3">
+              <button 
+                onClick={() => setRules({ ...DEFAULT_RULES })}
+                className="flex-1 py-3 bg-white/10 hover:bg-white/20 text-white font-bold rounded-xl transition-all"
+              >
+                Reset Defaults
+              </button>
+              <button 
+                onClick={() => setShowRulesModal(false)}
+                className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-black font-bold rounded-xl transition-all"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rules Info Button (during gameplay) */}
+      {gameState?.gameStarted && !winner && (
+        <button
+          onClick={() => setShowRulesInfo(true)}
+          className="fixed bottom-4 right-4 z-30 w-12 h-12 bg-black/60 hover:bg-black/80 backdrop-blur rounded-full flex items-center justify-center text-yellow-400 border border-white/10 shadow-lg transition-all"
+          title="View Rules"
+        >
+          <Info className="w-6 h-6" />
+        </button>
+      )}
+
+      {/* Rules Info Panel (during gameplay) */}
+      {showRulesInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setShowRulesInfo(false)}>
+          <div className="bg-gray-900 p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 border border-white/10" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-black text-white flex items-center gap-2">
+                <Info className="w-5 h-5 text-yellow-400" />
+                Active Rules
+              </h3>
+              <button onClick={() => setShowRulesInfo(false)} className="text-white/50 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-2">
+              <div className={`flex items-center justify-between p-3 rounded-lg ${gameState?.rules?.pickTwo ? 'bg-green-500/20 border border-green-500/30' : 'bg-red-500/20 border border-red-500/30'}`}>
+                <span className="text-white font-medium">Pick Two (Card 2)</span>
+                <span className={`text-sm font-bold ${gameState?.rules?.pickTwo ? 'text-green-400' : 'text-red-400'}`}>
+                  {gameState?.rules?.pickTwo ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <div className={`flex items-center justify-between p-3 rounded-lg ${gameState?.rules?.pickThree ? 'bg-green-500/20 border border-green-500/30' : 'bg-red-500/20 border border-red-500/30'}`}>
+                <span className="text-white font-medium">Pick Three (Card 5)</span>
+                <span className={`text-sm font-bold ${gameState?.rules?.pickThree ? 'text-green-400' : 'text-red-400'}`}>
+                  {gameState?.rules?.pickThree ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <div className={`flex items-center justify-between p-3 rounded-lg ${gameState?.rules?.defendPick ? 'bg-green-500/20 border border-green-500/30' : 'bg-red-500/20 border border-red-500/30'}`}>
+                <span className="text-white font-medium">Defend/Stack</span>
+                <span className={`text-sm font-bold ${gameState?.rules?.defendPick ? 'text-green-400' : 'text-red-400'}`}>
+                  {gameState?.rules?.defendPick ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <div className={`flex items-center justify-between p-3 rounded-lg ${gameState?.rules?.winWithHoldOn ? 'bg-green-500/20 border border-green-500/30' : 'bg-red-500/20 border border-red-500/30'}`}>
+                <span className="text-white font-medium">Win with Hold On</span>
+                <span className={`text-sm font-bold ${gameState?.rules?.winWithHoldOn ? 'text-green-400' : 'text-red-400'}`}>
+                  {gameState?.rules?.winWithHoldOn ? 'ON' : 'OFF'}
+                </span>
+              </div>
+            </div>
+            
+            {gameState?.rulesLocked && (
+              <p className="mt-4 text-white/40 text-xs text-center">
+                🔒 Rules are locked for this game
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

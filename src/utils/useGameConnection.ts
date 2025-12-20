@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from './supabase-client';
-import { GameState, GameMessage, Card, CardShape } from '../types/game';
+import { GameState, GameMessage, Card, CardShape, GameRules } from '../types/game';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type BroadcastEnvelope = {
@@ -15,13 +15,15 @@ interface GameConnection {
   gameState: GameState | null;
   playerId: string | null;
   joinGame: (roomCode: string, playerName: string, playerId: string) => Promise<void>;
-  startGame: (roomCode: string, players: {id: string, name: string}[]) => Promise<void>;
+  startGame: (roomCode: string, players: {id: string, name: string}[], rules?: Partial<GameRules>) => Promise<void>;
   playCard: (roomCode: string, playerId: string, card: Card, selectedShape?: CardShape | null) => Promise<void>;
   drawCard: (roomCode: string, playerId: string) => Promise<void>;
   getHand: (roomCode: string, playerId: string) => Promise<Card[]>;
   setReady: (roomCode: string, playerId: string) => Promise<void>;
   fetchGameState: (roomCode: string) => Promise<GameState | null>;
   sendMessage: (message: GameMessage) => Promise<void>; // Basic broadcast
+  updateRules: (roomCode: string, playerId: string, playerName: string, rules: Partial<GameRules>) => Promise<void>;
+  triggerAutoPlay: (roomCode: string, playerId: string) => Promise<void>;
 }
 
 export function useGameConnection(roomCode: string | null, onMessage?: (msg: GameMessage) => void): GameConnection {
@@ -218,8 +220,8 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       });
       setPlayerId(playerId);
     },
-    startGame: async (roomCode, players) => {
-      await invokeFunctions('/game/start', { roomCode, players });
+    startGame: async (roomCode, players, rules) => {
+      await invokeFunctions('/game/start', { roomCode, players, rules });
     },
     playCard: async (roomCode, playerId, card, selectedShape) => {
       await invokeFunctions('/game/play-card', { roomCode, playerId, card, selectedShape });
@@ -248,6 +250,12 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
             console.error('[GameConn] Failed to fetch game state:', e);
             return null;
         }
+    },
+    updateRules: async (roomCode: string, playerId: string, playerName: string, rules: Partial<GameRules>) => {
+        await invokeFunctions('/game/update-rules', { roomCode, playerId, playerName, rules });
+    },
+    triggerAutoPlay: async (roomCode: string, playerId: string) => {
+        await invokeFunctions('/game/auto-play', { roomCode, playerId });
     }
   };
 }

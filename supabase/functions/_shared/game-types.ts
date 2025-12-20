@@ -6,6 +6,22 @@
 export type CardShape = 'circle' | 'square' | 'triangle' | 'star' | 'cross';
 export type CardNumber = 1 | 2 | 3 | 4 | 5 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 20;
 
+// Configurable game rules
+export interface GameRules {
+  pickTwo: boolean;        // Card 2 forces next player to pick 2 (default: true)
+  pickThree: boolean;      // Card 5 forces next player to pick 3 (default: false)
+  defendPick: boolean;     // Can counter Pick 2/3 with another Pick 2/3 (default: false)
+  winWithHoldOn: boolean;  // Can win by playing Hold On (1) as last card (default: false)
+}
+
+// Default rules configuration
+export const DEFAULT_RULES: GameRules = {
+  pickTwo: true,
+  pickThree: false,
+  defendPick: false,
+  winWithHoldOn: false,
+};
+
 export interface Card {
   id: string;
   shape: CardShape;
@@ -46,10 +62,16 @@ export interface GameState {
   discardPile: Card[]; // Cards that have been played
   playerHands: Record<string, Card[]>; // Map of playerId -> their private hand
   sessionWins?: Record<string, number>; // Wins per player during room session
+  // Configurable rules (set before first action, immutable after)
+  rules: GameRules;
+  rulesLocked: boolean; // True after first card is played
+  totalTurns: number; // Track turns for rules locking
+  // Turn timer
+  turnStartTime?: number; // Timestamp when current turn started
 }
 
 export interface GameMessage {
-  type: 'player_joined' | 'player_left' | 'card_played' | 'game_started' | 'shape_selected' | 'turn_changed' | 'cards_drawn' | 'special_effect' | 'deal' | 'state_sync' | 'join' | 'play' | 'draw';
+  type: 'player_joined' | 'player_left' | 'card_played' | 'game_started' | 'shape_selected' | 'turn_changed' | 'cards_drawn' | 'special_effect' | 'deal' | 'state_sync' | 'join' | 'play' | 'draw' | 'chat_message' | 'activate_chat' | 'toggle_chat' | 'toggle_mute' | 'mute_status' | 'rules_update';
   playerId: string;
   playerName?: string;
   card?: Card;
@@ -59,5 +81,7 @@ export interface GameMessage {
   shape?: CardShape;
   cardsDrawn?: number;
   effect?: string;
+  message?: string; // For chat messages
+  rules?: Partial<GameRules>; // For rules updates
   timestamp: number;
 }

@@ -2,11 +2,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { canDefendAgainstPick, canPlayCard } from '../../utils/whot-rules';
 import { useGameConnection } from '../../utils/useGameConnection';
-import { useAnnouncer } from '../../utils/useAnnouncer';
+import { useYarnGPT } from '../../utils/useYarnGPT';
 import { Card, CardShape, GameMessage } from '../../types/game';
 import { WhotCard } from '../card';
 import { ArrowLeft, RefreshCw, Send, Eye, EyeOff, AlertTriangle, Circle, Square, Triangle, Star, X as Cross, MessageCircle, Volume2, VolumeX } from 'lucide-react';
 import { WinnerOverlay } from './winner-overlay';
+import confetti from 'canvas-confetti';
+import { CONFETTI_COLORS } from '../../utils/theme-constants';
 
 interface ControllerViewProps {
   roomCode: string;
@@ -63,11 +65,32 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   // Chat State
   const [chatInput, setChatInput] = useState('');
 
-  // Voice Announcer (controlled by local mute toggle)
-  const { play, playShapeCall } = useAnnouncer(!isMuted);
+  // Voice Announcer (YarnGPT only; controlled by local mute toggle)
+  const { play: playYarn, preload } = useYarnGPT(!isMuted);
   const lastAnnouncedCard = useRef<string | null>(null);
   const lastAnnouncedWinner = useRef<string | null>(null);
+  const pendingContinue = useRef<boolean>(false); // Announce "Continue!" after Hold On / General Market
   const hasAttemptedStateFetch = useRef(false);
+
+  useEffect(() => {
+    if (isMuted) return;
+    preload([
+      'Oya Pick Two!',
+      'Oya Pick Three!',
+      'Go to market my friend!',
+      'Hold On!',
+      'Suspension!',
+      'Check Up!',
+      'Last Card oo!',
+      'Continue!',
+      'I need Circle!',
+      'I need Square!',
+      'I need Triangle!',
+      'I need Star!',
+      'I need Cross!',
+      'Warning! Two cards left!',
+    ]);
+  }, [isMuted, preload]);
 
   // Fetch current game state on mount (for reconnection)
   useEffect(() => {
@@ -115,43 +138,119 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
 
   // Announce power cards when they appear
   useEffect(() => {
-    if (!topCard) return;
+    if (!topCard || winner || isMuted) return;
     
     const cardKey = `${topCard.shape}-${topCard.number}`;
     if (lastAnnouncedCard.current === cardKey) return;
     lastAnnouncedCard.current = cardKey;
 
+    const rules = gameState?.rules;
+
+    // If we previously announced Hold On / General Market, follow-up with "Continue!"
+    // BUT only when the next card is not itself a power card.
+    if (pendingContinue.current && !winner) {
+      const isPowerCard = [1, 2, 5, 8, 14, 20].includes(topCard.number);
+      if (!isPowerCard) {
+        setTimeout(() => playYarn('Continue!'), 1500);
+      }
+    }
+    pendingContinue.current = false;
+
     switch (topCard.number) {
       case 2:
-        play('pick_two');
+        if (rules?.pickTwo) playYarn('Oya Pick Two!');
         break;
       case 5:
-        play('pick_three');
+        if (rules?.pickThree) playYarn('Oya Pick Three!');
         break;
       case 14:
-        play('general_market');
+        playYarn('Go to market my friend!');
+        pendingContinue.current = true;
         break;
       case 1:
-        play('hold_on');
+        playYarn('Hold On!');
+        pendingContinue.current = true;
         break;
       case 8:
-        play('suspension');
+        playYarn('Suspension!');
         break;
       case 20:
         if (gameState?.selectedShape) {
-          playShapeCall(gameState.selectedShape);
+          const shape = gameState.selectedShape.charAt(0).toUpperCase() + gameState.selectedShape.slice(1);
+          playYarn(`I need ${shape}!`);
         }
         break;
     }
-  }, [topCard, gameState?.selectedShape, play, playShapeCall]);
+  }, [topCard, gameState?.selectedShape, gameState?.rules, isMuted, playYarn, winner]);
 
-  // Announce winner
+  // Announce last card warnings (delayed so power card announcement plays first)
   useEffect(() => {
-    if (winner && winner !== lastAnnouncedWinner.current) {
-      lastAnnouncedWinner.current = winner;
-      play('check_up');
+    if (isMuted || winner) return;
+
+    const action = gameState?.lastAction?.toLowerCase() || '';
+    let timeoutId: number | undefined;
+
+    if (action.includes('last card')) {
+      timeoutId = window.setTimeout(() => playYarn('Last Card oo!'), 2500);
+    } else if (action.includes('warning') && action.includes('two cards')) {
+      timeoutId = window.setTimeout(() => playYarn('Warning! Two cards left!'), 2500);
     }
-  }, [winner, play]);
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [gameState?.lastAction, isMuted, playYarn, winner]);
+
+  // Announce winner with confetti and applause (mirrors host)
+  useEffect(() => {
+    if (isMuted) return;
+    if (!winner || winner === lastAnnouncedWinner.current) return;
+
+    lastAnnouncedWinner.current = winner;
+
+    // Play check_up announcement
+    playYarn('Check Up!');
+
+    // After check_up (~1.5s), play applause and fire confetti
+    const timeoutId = window.setTimeout(() => {
+      const applauseAudio = new Audio('/sounds/applause.mp3');
+      applauseAudio.play().catch(() => {});
+
+      const fireConfetti = () => {
+        const defaults = {
+          disableForReducedMotion: true,
+          ticks: 150,
+          gravity: 1.2,
+          scalar: 0.9,
+          colors: [...CONFETTI_COLORS],
+        };
+
+        confetti({
+          ...defaults,
+          particleCount: 40,
+          angle: 60,
+          spread: 50,
+          origin: { x: 0, y: 0.8 },
+        });
+
+        confetti({
+          ...defaults,
+          particleCount: 40,
+          angle: 120,
+          spread: 50,
+          origin: { x: 1, y: 0.8 },
+        });
+      };
+
+      fireConfetti();
+      const intervalId = window.setInterval(fireConfetti, 600);
+      window.setTimeout(() => window.clearInterval(intervalId), 1200);
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [isMuted, winner, playYarn]);
 
   const fetchHand = useCallback(async () => {
     try {

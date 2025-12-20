@@ -14,5 +14,3 @@ export const supabase = createClient(supabaseUrl, publicAnonKey, {
     autoRefreshToken: false
   }
 });
-
-console.log('Supabase client initialized:', { url: supabaseUrl, hasKey: !!publicAnonKey });

@@ -3,7 +3,7 @@
  * Mirrored for Edge Function use
  */
 
-import { Card, CardShape, CardNumber, GameState, Player } from './game-types.ts';
+import { Card, CardShape, CardNumber, GameState, Player, GameRules, DEFAULT_RULES } from './game-types.ts';
 
 // Special Cards
 export const SPECIAL_CARDS = {
@@ -143,16 +143,33 @@ export function mustDrawCards(state: GameState, playerId: string): number {
 }
 
 export function canDefendAgainstPick(card: Card, state: GameState): boolean {
-  // STRICT RULE CHANGE: No Defense allowed.
-  // Victim must always go to market.
+  // Check if defending is enabled in rules
+  if (!state.rules?.defendPick) {
+    return false;
+  }
+  
+  // Can defend Pick Two with another Pick Two
+  if (state.effectActive === 'pick_two' && card.number === 2) {
+    return true;
+  }
+  
+  // Can defend Pick Three with another Pick Three (if Pick Three is enabled)
+  if (state.effectActive === 'pick_three' && card.number === 5 && state.rules?.pickThree) {
+    return true;
+  }
+  
   return false;
 }
 
 export function getPlayableCards(hand: Card[], currentCard: Card, selectedShape: CardShape | null, state: GameState): Card[] {
-  // If Pick Two/Three is active against you, you CANNOT play any card.
-  // You MUST draw.
+  // If Pick Two/Three is active against you
   if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
-     return [];
+    // If defending is enabled, return only cards that can defend
+    if (state.rules?.defendPick) {
+      return hand.filter(card => canDefendAgainstPick(card, state));
+    }
+    // Otherwise, must draw - no playable cards
+    return [];
   }
 
   return hand.filter(card => {
@@ -168,6 +185,7 @@ export function applyCardEffect(
   const newState = { ...state };
   const effect = getCardEffect(card);
   const playerIndex = state.players.findIndex(p => p.id === playerId);
+  const rules = state.rules || DEFAULT_RULES;
 
   switch (effect.type) {
     case 'hold_on':
@@ -175,17 +193,31 @@ export function applyCardEffect(
       break;
 
     case 'pick_two':
-      newState.pickTwoChain = (state.pickTwoChain || 0) + 1;
-      newState.effectActive = 'pick_two';
-      newState.lastAction = `${state.players[playerIndex].name} played PICK TWO!`;
-      newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
+      // Only apply if Pick Two is enabled
+      if (rules.pickTwo) {
+        newState.pickTwoChain = (state.pickTwoChain || 0) + 1;
+        newState.effectActive = 'pick_two';
+        newState.lastAction = `${state.players[playerIndex].name} played PICK TWO!`;
+        newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
+      } else {
+        // Treat as normal card
+        newState.lastAction = `${state.players[playerIndex].name} played a 2`;
+        newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
+      }
       break;
 
     case 'pick_three':
-      newState.pickThreeChain = (state.pickThreeChain || 0) + 1;
-      newState.effectActive = 'pick_three';
-      newState.lastAction = `${state.players[playerIndex].name} played PICK THREE!`;
-      newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
+      // Only apply if Pick Three is enabled
+      if (rules.pickThree) {
+        newState.pickThreeChain = (state.pickThreeChain || 0) + 1;
+        newState.effectActive = 'pick_three';
+        newState.lastAction = `${state.players[playerIndex].name} played PICK THREE!`;
+        newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
+      } else {
+        // Treat as normal card
+        newState.lastAction = `${state.players[playerIndex].name} played a 5`;
+        newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
+      }
       break;
 
     case 'suspension':
@@ -246,7 +278,7 @@ export function calculateScore(hand: Card[]): number {
     }, 0);
 }
 
-export function createInitialGameState(roomCode: string, players: { id: string; name: string }[]): GameState {
+export function createInitialGameState(roomCode: string, players: { id: string; name: string }[], rules?: Partial<GameRules>): GameState {
   const deck = createDeck();
   const shuffledDeck = shuffleDeck(deck);
   const { hands, remainingDeck, startCard } = dealCards(shuffledDeck, players.length, 6);
@@ -262,6 +294,12 @@ export function createInitialGameState(roomCode: string, players: { id: string; 
       isReady: false
     };
   });
+
+  // Merge provided rules with defaults
+  const gameRules: GameRules = {
+    ...DEFAULT_RULES,
+    ...rules
+  };
 
   const initialState: GameState = {
     roomCode,
@@ -280,6 +318,10 @@ export function createInitialGameState(roomCode: string, players: { id: string; 
     marketPile: remainingDeck,
     discardPile: [startCard],
     playerHands: playerHands,
+    rules: gameRules,
+    rulesLocked: false,
+    totalTurns: 0,
+    turnStartTime: Date.now(),
   };
 
   return applyStartCardEffect(initialState);
@@ -288,21 +330,20 @@ export function createInitialGameState(roomCode: string, players: { id: string; 
 export function applyStartCardEffect(state: GameState): GameState {
     const newState = { ...state };
     const { currentCard } = newState;
+    const rules = state.rules || DEFAULT_RULES;
+    
     if (!currentCard) return newState;
 
-    // We can reuse getCardEffect, but need to be careful not to trigger dependencies that expect a 'player' 
-    // This is a "Dealer" effect.
-
-    // 1. Pick Two
-    if (currentCard.number === 2) {
+    // 1. Pick Two (only if enabled)
+    if (currentCard.number === 2 && rules.pickTwo) {
         newState.effectActive = 'pick_two';
-        newState.pickTwoChain = 1; // Single card from dealer = 1×2 = 2 cards
+        newState.pickTwoChain = 1;
         newState.lastAction = "Game Started with Pick Two!";
     }
-    // 2. Pick Three
-    else if (currentCard.number === 5) {
+    // 2. Pick Three (only if enabled)
+    else if (currentCard.number === 5 && rules.pickThree) {
         newState.effectActive = 'pick_three';
-        newState.pickThreeChain = 1; // Single card from dealer = 1×3 = 3 cards
+        newState.pickThreeChain = 1;
         newState.lastAction = "Game Started with Pick Three!";
     }
     // 3. General Market

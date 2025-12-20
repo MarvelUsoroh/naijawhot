@@ -1,4 +1,4 @@
-import { Card, CardShape, CardNumber, GameState } from '../types/game';
+import { Card, CardShape, CardNumber, GameState, DEFAULT_RULES } from '../types/game';
 
 /**
  * Nigerian Whot Card Composition (54 cards total)
@@ -241,9 +241,24 @@ export function mustDrawCards(state: GameState, playerId: string): number {
 /**
  * Check if player can defend against Pick Two/Three with their own
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function canDefendAgainstPick(_card: Card, _state: GameState): boolean {
-  // STRICT RULE CHANGE: No Defense allowed. 
+export function canDefendAgainstPick(card: Card, state: GameState): boolean {
+  const rules = state.rules || DEFAULT_RULES;
+  
+  // Check if defending is enabled in rules
+  if (!rules.defendPick) {
+    return false;
+  }
+  
+  // Can defend Pick Two with another Pick Two
+  if (state.effectActive === 'pick_two' && card.number === 2) {
+    return true;
+  }
+  
+  // Can defend Pick Three with another Pick Three (if Pick Three is enabled)
+  if (state.effectActive === 'pick_three' && card.number === 5 && rules.pickThree) {
+    return true;
+  }
+  
   return false;
 }
 
@@ -251,10 +266,16 @@ export function canDefendAgainstPick(_card: Card, _state: GameState): boolean {
  * Get playable cards from hand
  */
 export function getPlayableCards(hand: Card[], currentCard: Card, selectedShape: CardShape | null, state: GameState): Card[] {
-  // If Pick Two/Three is active against you, you CANNOT play any card.
-  // You MUST draw.
+  const rules = state.rules || DEFAULT_RULES;
+  
+  // If Pick Two/Three is active against you
   if (state.effectActive === 'pick_two' || state.effectActive === 'pick_three') {
-     return [];
+    // If defending is enabled, return only cards that can defend
+    if (rules.defendPick) {
+      return hand.filter(card => canDefendAgainstPick(card, state));
+    }
+    // Otherwise, must draw - no playable cards
+    return [];
   }
 
   return hand.filter(card => {
