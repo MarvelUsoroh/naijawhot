@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { GameMessage, GameRules, DEFAULT_RULES } from '../../types/game';
 import { useGameConnection } from '../../utils/useGameConnection';
-import { useYarnGPT } from '../../utils/useYarnGPT';
-import { CONFETTI_COLORS } from '../../utils/theme-constants';
-import confetti from 'canvas-confetti';
+import { useGameAnnouncer } from '../../hooks/useGameAnnouncer';
+import { ChatPanel, ChatMessage } from '../chat';
 import { WhotCard } from '../card';
-import { QrCode, Copy, Crown, AlertCircle, X, MessageCircle, Settings, Info } from 'lucide-react';
+import { QrCode, Copy, Crown, AlertCircle, X, Settings, Info } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WinnerOverlay } from './winner-overlay';
 
@@ -24,8 +23,7 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
 
   // Chat State
   const [showChat, setShowChat] = useState(false);
-  const [chatMessages, setChatMessages] = useState<{playerName: string; message: string; timestamp: number}[]>([]);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   // Rules Configuration State
   const [rules, setRules] = useState<GameRules>({ ...DEFAULT_RULES });
@@ -51,8 +49,8 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
           setShowChat(true);
           setChatMessages(prev => [
               ...prev,
-              { playerName: msg.playerName!, message: msg.message!, timestamp: Date.now() }
-          ].slice(-20)); // Keep last 20 messages
+              { playerName: msg.playerName!, message: msg.message!, timestamp: msg.timestamp || Date.now() }
+          ].slice(-20));
       }
       // Rules updates from other players
       if (msg.type === 'rules_update' && msg.rules) {
@@ -60,18 +58,14 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
       }
   }, []);
 
-  // Auto-scroll chat to bottom when new messages arrive
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [chatMessages]);
-
   const { 
     gameState, 
     isConnected, 
     startGame: startGameOnServer
   } = useGameConnection(localRoomCode, handleMessage);
+
+  // Use shared announcer hook (host always plays sounds)
+  useGameAnnouncer({ gameState, isMuted: false });
 
   const [message, setMessage] = useState('Waiting for players...');
   const [showQR, setShowQR] = useState(false);
@@ -81,149 +75,30 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
   const topCard = gameState?.currentCard;
   const winner = gameState?.winner;
 
-  // Voice Announcer (Host always plays sounds)
-  const { play, preload } = useYarnGPT(true);
-  const lastAnnouncedCard = useRef<string | null>(null);
-  const lastAnnouncedWinner = useRef<string | null>(null);
-  const pendingContinue = useRef<boolean>(false); // Track if we need to announce "Continue" after next play
+  // Track if this is a rematch (game has been played before in this session)
+  const hasPlayedBefore = useRef(false);
 
-  // Preload common phrases
+  // Auto-start when all players are ready (for rematches only)
   useEffect(() => {
-    preload([
-      "Oya Pick Two!", "Oya Pick Three!", "Go to market my friend!", "Hold On!", 
-      "Suspension!", "Check Up!", "Last Card oo!", "Continue!",
-      "I need Circle!", "I need Square!", "I need Triangle!", "I need Star!", "I need Cross!",
-      "Warning! Two cards left!" 
-    ]);
-  }, [preload]);
-
-  // Announce power cards and game events
-  useEffect(() => {
-    if (!topCard || winner) return;
-    
-    const cardKey = `${topCard.shape}-${topCard.number}`;
-    
-    // Prevent duplicate announcements for the same card
-    if (lastAnnouncedCard.current === cardKey) return;
-    
-    // Check if we need to announce "Continue" from previous Hold On / General Market
-    // But ONLY if there's no winner (don't say "Continue" after "Check Up!")
-    if (pendingContinue.current && !winner) {
-      // Only announce "Continue" if the follow-up card is NOT a power card
-      const isPowerCard = [1, 2, 5, 8, 14, 20].includes(topCard.number);
-      if (!isPowerCard) {
-        setTimeout(() => play('Continue!'), 1500);
-      }
-    }
-    pendingContinue.current = false; // Always clear, whether we played or not
-    
-    lastAnnouncedCard.current = cardKey;
-
-    // Trigger sound based on card number
-    const rules = gameState?.rules;
-    
-    switch (topCard.number) {
-      case 2:
-        // Only announce Pick Two if the rule is enabled
-        if (rules?.pickTwo) {
-          play('Oya Pick Two!');
-        }
-        break;
-      case 5:
-        // Only announce Pick Three if the rule is enabled
-        if (rules?.pickThree) {
-          play('Oya Pick Three!');
-        }
-        break;
-      case 14:
-        play('Go to market my friend!');
-        pendingContinue.current = true; // Set flag to announce "Continue" on next play
-        break;
-      case 1:
-        play('Hold On!');
-        pendingContinue.current = true; // Set flag to announce "Continue" on next play
-        break;
-      case 8:
-        play('Suspension!');
-        break;
-      case 20:
-        // For Whot card, announce the selected shape
-        if (gameState?.selectedShape) {
-          const shape = gameState.selectedShape.charAt(0).toUpperCase() + gameState.selectedShape.slice(1);
-          play(`I need ${shape}!`);
-        }
-        break;
-    }
-  }, [topCard, gameState?.selectedShape, gameState?.rules, play, winner]);
-
-  // Announce winner with confetti and applause (Host and Spectator)
-  useEffect(() => {
-    if (winner && winner !== lastAnnouncedWinner.current) {
-      lastAnnouncedWinner.current = winner;
-      
-      // Play check_up announcement
-      play('Check Up!');
-      
-      // After check_up (~1.5s), play applause and fire confetti
-      setTimeout(() => {
-        // Play applause (separate audio instance)
-        const applauseAudio = new Audio('/sounds/applause.mp3');
-        applauseAudio.play().catch(() => {});
-        
-        // Fire confetti celebration! (Optimized for performance)
-        const fireConfetti = () => {
-          const defaults = {
-            disableForReducedMotion: true,
-            ticks: 150, // Faster fade-out
-            gravity: 1.2, // Fall faster
-            scalar: 0.9, // Slightly smaller particles
-            colors: [...CONFETTI_COLORS]
-          };
-          
-          // Burst from left
-          confetti({
-            ...defaults,
-            particleCount: 40,
-            angle: 60,
-            spread: 50,
-            origin: { x: 0, y: 0.8 },
-          });
-          // Burst from right
-          confetti({
-            ...defaults,
-            particleCount: 40,
-            angle: 120,
-            spread: 50,
-            origin: { x: 1, y: 0.8 },
-          });
-        };
-
-        // Fire 3 bursts over 1.2 seconds (fewer, more spaced out)
-        fireConfetti();
-        const interval = setInterval(fireConfetti, 600);
-        setTimeout(() => clearInterval(interval), 1200);
-      }, 1500);
-    }
-  }, [winner, play]);
-
-  // Announce last card warnings (delayed so power card announcement plays first)
-  useEffect(() => {
-    if (winner) return;
-
-    const action = gameState?.lastAction?.toLowerCase() || '';
-    let timeoutId: number | undefined;
-
-    if (action.includes('last card')) {
-      // Delay to let power card announcement play first
-      timeoutId = setTimeout(() => play('Last Card oo!'), 2500);
-    } else if (action.includes('warning') && action.includes('two cards')) {
-      timeoutId = setTimeout(() => play('Warning! Two cards left!'), 2500);
+    // Mark that a game has been played when we see a winner
+    if (winner) {
+      hasPlayedBefore.current = true;
     }
 
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [gameState?.lastAction, play, winner]);
+    // Only auto-start for rematches (not first game)
+    if (!hasPlayedBefore.current) return;
+    
+    // Need at least 2 players and a winner (game ended)
+    if (!winner || !gameState?.players || gameState.players.length < 2) return;
+    
+    // Check if ALL players are ready
+    const allReady = gameState.players.every(p => p.isReady);
+    if (!allReady) return;
+
+    // Auto-start the next game!
+    console.log('All players ready - auto-starting rematch...');
+    startGameOnServer(localRoomCode, gameState.players, rules);
+  }, [winner, gameState?.players, localRoomCode, rules, startGameOnServer]);
 
   const statusMessage = winner
     ? `WINNER! ${players.find(p => p.id === winner)?.name} has won the game!`
@@ -512,74 +387,17 @@ export function HostView({ onExit, initialRoomCode, isSpectator = false }: HostV
 
       </div>
       
-      {/* Chat Panel (slides in from right) - hidden when winner displayed */}
-      <div className={`fixed right-0 top-0 bottom-0 w-80 bg-black/40 backdrop-blur-md border-l border-white/10 flex flex-col z-40 transition-transform duration-300 ${showChat && !winner ? 'translate-x-0' : 'translate-x-full'}`}>
-        {/* Chat Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/20">
-          <div className="flex items-center gap-2">
-            <MessageCircle className="w-5 h-5 text-yellow-400" />
-            <span className="text-white font-bold text-sm uppercase tracking-widest">Live Chat</span>
-          </div>
-          <button 
-            onClick={() => setShowChat(false)}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/60 hover:text-white transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        
-        {/* Chat Messages with auto-scroll */}
-        <div 
-          ref={chatScrollRef}
-          className="flex-1 overflow-y-auto p-4 space-y-1"
-        >
-          {chatMessages.length === 0 && (
-            <div className="text-white/30 text-sm text-center py-8">
-              No messages yet...
-            </div>
-          )}
-          {chatMessages.map((msg, index) => {
-            const prevMsg = chatMessages[index - 1];
-            const isFirstInGroup = !prevMsg || prevMsg.playerName !== msg.playerName || 
-              (msg.timestamp - prevMsg.timestamp > 60000); // New group if >1min apart
-            const isOwnMessage = msg.playerName === 'Host'; // Host's messages (adjust if needed)
-            
-            return (
-              <div 
-                key={`${msg.timestamp}-${index}`}
-                className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 fade-in duration-300`}
-              >
-                <div className={`max-w-[85%] ${isOwnMessage ? 'items-end' : 'items-start'}`}>
-                  {/* Show name only for first message in group */}
-                  {isFirstInGroup && (
-                    <div className={`flex items-center gap-2 text-xs px-2 mb-1 ${isOwnMessage ? 'justify-end' : ''}`}>
-                      <span className="font-medium text-yellow-400">{msg.playerName}</span>
-                      <span className="text-white/40">
-                        {new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  )}
-                  {/* Message bubble */}
-                  <div className={`py-2 px-3 rounded-xl text-sm ${
-                    isOwnMessage 
-                      ? 'bg-yellow-500/20 text-yellow-100 border border-yellow-500/30' 
-                      : 'bg-white/10 text-white/90 border border-white/10'
-                  }`}>
-                    {msg.message}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        
-        {/* Privacy Footnote */}
-        <div className="px-4 py-2 border-t border-white/5 bg-black/20">
-          <p className="text-white/30 text-[10px] text-center flex items-center justify-center gap-1">
-            <span>Messages will disappear when the session ends</span>
-          </p>
-        </div>
-      </div>
+      {/* Shared Chat Panel Component (Host view - no input) */}
+      <ChatPanel
+        isOpen={showChat && !winner}
+        onClose={() => setShowChat(false)}
+        messages={chatMessages}
+        currentPlayerName="Host"
+        chatInput=""
+        onChatInputChange={() => {}}
+        onSendMessage={() => {}}
+        showInput={false}
+      />
 
       {/* Rules Configuration Modal */}
       {showRulesModal && (

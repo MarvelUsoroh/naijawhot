@@ -1,17 +1,13 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { GameState, GameMessage, Card, Player, GameRules, DEFAULT_RULES } from "../_shared/game-types.ts";
+import { GameState, Card, GameRules, DEFAULT_RULES } from "../_shared/game-types.ts";
 import { 
-  createDeck, 
-  dealCards, 
   canPlayCard, 
   shuffleDeck, 
   applyCardEffect, 
-  mustDrawCards, 
   canDefendAgainstPick, 
   getPlayableCards,
-  getCardEffect,
   calculateScore,
   createInitialGameState
 } from "../_shared/whot-rules.ts";
@@ -607,11 +603,12 @@ app.post("*/game/auto-play", async (c) => {
         const { roomCode, playerId } = await c.req.json();
         const state = await getGameState(roomCode);
         if (!state) return c.json({ error: "Game not found" }, 404);
-        if (state.winner) return c.json({ error: "Game is over" }, 400);
+        if (state.winner) return c.json({ success: true, skipped: true, reason: "Game already ended" });
         
         const playerIndex = state.players.findIndex(p => p.id === playerId);
         if (playerIndex !== state.currentPlayerIndex) {
-            return c.json({ error: "Not this player's turn" }, 400);
+            // Graceful no-op: turn already moved, this is expected in race conditions
+            return c.json({ success: true, skipped: true, reason: "Turn already passed" });
         }
         
         const hand = state.playerHands[playerId] || [];

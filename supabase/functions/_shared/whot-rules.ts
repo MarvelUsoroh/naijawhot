@@ -220,7 +220,7 @@ export function applyCardEffect(
       }
       break;
 
-    case 'suspension':
+    case 'suspension': {
        newState.lastAction = `${state.players[playerIndex].name} played SUSPENSION!`;
        
        const skipCount = 1;
@@ -232,6 +232,7 @@ export function applyCardEffect(
        // Move to the player who actually plays
        newState.currentPlayerIndex = getNextPlayerIndex(newState.currentPlayerIndex, state.players.length);
        break;
+    }
 
     case 'general_market':
        newState.lastAction = `${state.players[playerIndex].name} played GENERAL MARKET!`;

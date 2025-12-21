@@ -1,11 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-// Initialize Supabase only if needed, or pass it in. 
-// Ideally use the existing client from useGameConnection context, but creating lightweight one here is fine for storage/functions access using anon key.
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase } from './supabase-client';
 
 type Voice = 'Idera' | 'Mary' | 'David' | 'Emeka' | 'Fatima' | 'Tayo';
 
