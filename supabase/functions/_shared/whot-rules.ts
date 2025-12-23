@@ -197,6 +197,7 @@ export function applyCardEffect(
       if (rules.pickTwo) {
         newState.pickTwoChain = (state.pickTwoChain || 0) + 1;
         newState.effectActive = 'pick_two';
+        newState.pickEffectInitiator = playerId; // Track who played it
         newState.lastAction = `${state.players[playerIndex].name} played PICK TWO!`;
         newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
       } else {
@@ -211,6 +212,7 @@ export function applyCardEffect(
       if (rules.pickThree) {
         newState.pickThreeChain = (state.pickThreeChain || 0) + 1;
         newState.effectActive = 'pick_three';
+        newState.pickEffectInitiator = playerId; // Track who played it
         newState.lastAction = `${state.players[playerIndex].name} played PICK THREE!`;
         newState.currentPlayerIndex = getNextPlayerIndex(state.currentPlayerIndex, state.players.length);
       } else {

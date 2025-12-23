@@ -63,6 +63,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   const [playerName, setPlayerName] = useState('');
   const [isJoined, setIsJoined] = useState(false);
   const [hand, setHand] = useState<Card[]>([]);
+  const handRef = useRef<Card[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [message, setMessage] = useState('Enter your name to join...');
   const [loading, setLoading] = useState(false);
@@ -70,8 +71,9 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   const [pendingCard, setPendingCard] = useState<Card | null>(null);
   const hasAttemptedStateFetch = useRef(false);
 
-  const currentPlayerId = gameState?.players?.[gameState?.currentPlayerIndex]?.id;
-  const isMyTurn = currentPlayerId === playerId;
+  const serverCurrentPlayerId = gameState?.players?.[gameState?.currentPlayerIndex]?.id;
+  const effectiveCurrentPlayerId = serverCurrentPlayerId; // Always use server state
+  const isMyTurn = effectiveCurrentPlayerId === playerId;
   const winner = gameState?.winner;
   const iWon = winner === playerId;
 
@@ -87,7 +89,7 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
     validateTurn
   });
 
-  useGameAnnouncer({ gameState, isMuted });
+  const announcer = useGameAnnouncer({ gameState, isMuted });
 
   const fetchHand = useCallback(async () => { try { setHand(await getHand(roomCode, playerId)); } catch (e) { console.error("Failed to fetch hand", e); } }, [getHand, roomCode, playerId]);
 
@@ -100,6 +102,10 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
   }, [isConnected, roomCode, gameState, fetchGameState]);
 
   useEffect(() => { if (gameState?.gameStarted && isJoined && hand.length === 0) fetchHand(); }, [gameState?.gameStarted, isJoined, hand.length, fetchHand]);
+
+  useEffect(() => {
+    handRef.current = hand;
+  }, [hand]);
 
   useEffect(() => {
     if (gameState?.gameStarted && !isJoined && playerId) {
@@ -136,16 +142,51 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
       if (!isValid) { setMessage("Invalid Move! Check shape/number."); navigator.vibrate?.(200); return; }
     }
     if (card.number === 20 && !shape) { setPendingCard(card); setShowShapePicker(true); return; }
+
+    // Warm up TTS for the likely announcement so it feels instant when the broadcast arrives.
+    // Best-effort only; actual speaking remains driven by authoritative gameState.
+    if (!isMuted) {
+      const rules = gameState?.rules;
+      const prefetchText =
+        card.number === 2 && rules?.pickTwo ? 'Oya Pick Two!' :
+        card.number === 5 && rules?.pickThree ? 'Oya Pick Three!' :
+        card.number === 14 ? 'Go to market my friend!' :
+        card.number === 1 ? 'Hold On!' :
+        card.number === 8 ? 'Suspension!' :
+        card.number === 20 && shape ? `I need ${shape.charAt(0).toUpperCase() + shape.slice(1)}!` :
+        null;
+      if (prefetchText) announcer.prefetchPhrase(prefetchText);
+    }
+
     setLoading(true);
-    try { await playCardOnServer(roomCode, playerId, card, shape); setHand(prev => prev.filter(c => c.id !== card.id)); setPendingCard(null); setShowShapePicker(false); setMessage("Card played!"); }
-    catch (err: unknown) { setMessage(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`); }
+    const previousHand = handRef.current;
+    setHand(previousHand.filter(c => c.id !== card.id));
+    try { await playCardOnServer(roomCode, playerId, card, shape); setPendingCard(null); setShowShapePicker(false); setMessage("Card played!"); }
+    catch (err: unknown) {
+      setHand(previousHand);
+      setMessage(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
     finally { setLoading(false); }
   };
 
   const handleDraw = async () => {
+    if (!isMyTurn) { setMessage('Not your turn.'); return; }
+    setMessage("Drawing cards...");
     setLoading(true);
-    try { await drawCardOnServer(roomCode, playerId); setMessage("Drawing cards..."); }
-    catch (err: unknown) { setMessage(`Error drawing: ${err instanceof Error ? err.message : 'Unknown error'}`); }
+
+    try {
+      const res = await drawCardOnServer(roomCode, playerId);
+      const cards = res?.cards || [];
+      // Update immediately from HTTP response; broadcast will reconcile.
+      setHand(prev => {
+        const existingIds = new Set(prev.map(c => c.id));
+        const newCards = cards.filter(c => !existingIds.has(c.id));
+        return [...prev, ...newCards];
+      });
+    }
+    catch (err: unknown) {
+      setMessage(`Error drawing: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
     finally { setLoading(false); }
   };
 
@@ -184,7 +225,10 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
           </div>
           <form onSubmit={handleJoinGame} className="space-y-4">
             <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value)} placeholder="ENTER YOUR NAME" 
-              onFocus={(e) => setTimeout(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)}
+              onFocus={(e) => {
+                const el = e.currentTarget;
+                setTimeout(() => el.scrollIntoView?.({ behavior: 'smooth', block: 'center' }), 300);
+              }}
               className="w-full px-6 py-4 bg-white/10 border-2 border-white/20 rounded-xl focus:outline-none focus:border-yellow-400 text-white placeholder-white/30 transition-all text-center font-bold text-lg uppercase tracking-wider backdrop-blur-sm" autoFocus maxLength={12} />
             <button type="submit" disabled={!playerName.trim() || !isConnected || loading} className="w-full px-6 py-4 bg-gradient-to-r from-yellow-400 to-yellow-600 text-black rounded-xl text-xl hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-3 shadow-xl font-black uppercase tracking-wide">
               {loading ? <RefreshCw className="animate-spin"/> : <Send className="w-5 h-5" />} Join Table
@@ -212,14 +256,6 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
           </div>
           <div className="flex gap-2">
             {gameState?.gameStarted && <button onClick={() => setShowRulesInfo(true)} className="p-2 rounded-full transition-all border border-white/10 bg-white/10 text-white/60 hover:bg-white/20 hover:text-white" title="View Rules"><Info className="w-5 h-5" /></button>}
-            <button onClick={handleToggleChat} className={`relative p-2 rounded-full transition-all border border-white/10 ${showChat ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'}`} title="Toggle Chat">
-              <MessageCircle className="w-5 h-5" />
-              {!showChat && unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 animate-pulse border-2 border-black/50">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
             <button onClick={() => setIsMuted(!isMuted)} className={`p-2 rounded-full transition-all border border-white/10 ${!isMuted ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-white/10 text-white/50'}`} title={isMuted ? 'Enable Sound' : 'Mute Sound'}>{isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}</button>
           </div>
         </div>
@@ -326,12 +362,65 @@ export function ControllerView({ roomCode, onBack }: ControllerViewProps) {
       )}
 
       {!winner && (
-        <div className="relative z-20 px-4 py-3 bg-black/40 backdrop-blur-md border-t border-white/5">
-          <p className="text-white/40 text-xs font-mono tracking-widest uppercase text-center">{hand.length} Cards held</p>
+        <div className="relative z-20 px-4 py-3 bg-black/40 backdrop-blur-md border-t border-white/5 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+          <p className="text-white/40 text-xs font-mono tracking-widest uppercase text-center mb-3">{hand.length} Cards held</p>
+          
+          {/* Inline Chat Input - Always visible */}
+          <div className="flex items-center gap-2 max-w-2xl mx-auto">
+            <input 
+              type="text" 
+              value={chatInput} 
+              onChange={(e) => setChatInput(e.target.value)} 
+              placeholder="Type a message..."
+              className="flex-1 min-w-0 px-4 py-2.5 bg-black/30 border border-white/10 rounded-full text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-yellow-500/50"
+              onFocus={(e) => setTimeout(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && chatInput.trim()) {
+                  handleSendChatMessage();
+                }
+              }}
+            />
+            {/* Smart button: Chat toggle when empty, Send when typing */}
+            <button 
+              onClick={chatInput.trim() ? handleSendChatMessage : handleToggleChat}
+              className={`relative p-2.5 rounded-full transition-all border border-white/10 flex-shrink-0 ${
+                chatInput.trim() 
+                  ? 'bg-yellow-500 text-black hover:bg-yellow-400' 
+                  : showChat 
+                    ? 'bg-yellow-400 text-black' 
+                    : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
+              }`}
+              title={chatInput.trim() ? 'Send Message' : 'Toggle Chat'}
+            >
+              {chatInput.trim() ? (
+                <Send className="w-5 h-5" />
+              ) : (
+                <>
+                  <MessageCircle className="w-5 h-5" />
+                  {!showChat && unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 animate-pulse border-2 border-black/50">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
-      <ChatPanel isOpen={showChat && !winner} onClose={() => setShowChat(false)} messages={chatMessages} currentPlayerName={playerName} chatInput={chatInput} onChatInputChange={setChatInput} onSendMessage={handleSendChatMessage} />
+      <ChatPanel 
+        isOpen={showChat && !winner} 
+        onClose={() => setShowChat(false)} 
+        messages={chatMessages} 
+        currentPlayerName={playerName} 
+        chatInput={chatInput} 
+        onChatInputChange={setChatInput} 
+        onSendMessage={handleSendChatMessage}
+        showInput={false}
+        position="bottom"
+        height="50%"
+      />
 
       {showRulesInfo && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setShowRulesInfo(false)}>

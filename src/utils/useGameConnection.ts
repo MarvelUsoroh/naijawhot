@@ -17,7 +17,7 @@ interface GameConnection {
   joinGame: (roomCode: string, playerName: string, playerId: string) => Promise<void>;
   startGame: (roomCode: string, players: {id: string, name: string}[], rules?: Partial<GameRules>) => Promise<void>;
   playCard: (roomCode: string, playerId: string, card: Card, selectedShape?: CardShape | null) => Promise<void>;
-  drawCard: (roomCode: string, playerId: string) => Promise<void>;
+  drawCard: (roomCode: string, playerId: string) => Promise<{ success: boolean; cards: Card[] }>;
   getHand: (roomCode: string, playerId: string) => Promise<Card[]>;
   setReady: (roomCode: string, playerId: string) => Promise<void>;
   fetchGameState: (roomCode: string) => Promise<GameState | null>;
@@ -91,21 +91,21 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
 
     channel
       .on('broadcast', { event: 'game-message' }, (payload: { payload: GameMessage }) => {
-        // console.log('[GameConn] Received:', payload.payload); // Verbose
         if (onMessage) onMessage(payload.payload);
         
-        // Auto-update local state whenever a message carries a full game state.
-        // This avoids controller desync when a client misses a `state_sync` but receives
-        // another message (e.g. `card_played`) that still contains `gameState`.
-        // Use timestamp to prevent out-of-order updates from overwriting newer state.
+        // Auto-update local state whenever a message carries a game state
         if (payload.payload.gameState) {
           const incomingTs = payload.payload.timestamp;
 
           if (typeof incomingTs === 'number' && incomingTs > 0) {
-            if (incomingTs < lastGameStateTimestampRef.current) return;
+            if (incomingTs < lastGameStateTimestampRef.current) {
+              console.warn('[GameConn] Ignoring stale update:', incomingTs, 'vs', lastGameStateTimestampRef.current);
+              return;
+            }
             lastGameStateTimestampRef.current = incomingTs;
           }
 
+          // Always use full state update
           setGameState(payload.payload.gameState);
         }
       })
@@ -165,16 +165,17 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     
     // Construct base URL
     const projectUrl = import.meta.env.VITE_SUPABASE_URL;
-    const functionUrl = `${projectUrl}/functions/v1/whot-server${endpoint}`;
+    const functionBaseUrl = `${projectUrl}/functions/v1/whot-server${endpoint}`;
+    // Supabase docs: when you can't add an `x-region` header (e.g. CORS), use `forceFunctionRegion`.
+    // Using a query param also avoids introducing an extra custom header.
+    const functionUrl = functionRegion
+      ? `${functionBaseUrl}${functionBaseUrl.includes('?') ? '&' : '?'}forceFunctionRegion=${encodeURIComponent(functionRegion)}`
+      : functionBaseUrl;
 
      const headers: Record<string, string> = {
        'Content-Type': 'application/json',
        'Authorization': `Bearer ${token || anonKey}`, // Use session token if available, else anon
     };
-
-    if (functionRegion) {
-      headers['x-region'] = functionRegion;
-    }
 
     const response = await fetch(functionUrl, {
       method: 'POST',
@@ -227,7 +228,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
       await invokeFunctions('/game/play-card', { roomCode, playerId, card, selectedShape });
     },
     drawCard: async (roomCode, playerId) => {
-      await invokeFunctions('/game/draw', { roomCode, playerId });
+      return (await invokeFunctions('/game/draw', { roomCode, playerId })) as { success: boolean; cards: Card[] };
     },
     getHand: async (roomCode, playerId) => {
       const res = (await invokeFunctions('/game/get-hand', { roomCode, playerId })) as { hand: Card[] };

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 
-export const TURN_TIMEOUT_MS = 30000; // 30 seconds
+export const TURN_TIMEOUT_MS = 60000; // 60 seconds
 export const COUNTDOWN_WARNING_MS = 10000; // Show countdown in last 10 seconds
 
 interface UseAutoPlayOptions {

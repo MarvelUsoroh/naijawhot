@@ -17,6 +17,10 @@ interface ChatPanelProps {
   onSendMessage: () => void;
   /** Whether to show the input box in the panel (default: true) */
   showInput?: boolean;
+  /** Position of the panel: "bottom" for bottom sheet, "right" for side panel (default: "right") */
+  position?: 'bottom' | 'right';
+  /** Height of the panel when position="bottom" (default: "50%") */
+  height?: string;
 }
 
 /**
@@ -32,6 +36,8 @@ export function ChatPanel({
   onChatInputChange,
   onSendMessage,
   showInput = true,
+  position = 'right',
+  height = '50%',
 }: ChatPanelProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
@@ -48,6 +54,8 @@ export function ChatPanel({
     }
   };
 
+  const isBottomSheet = position === 'bottom';
+  
   return (
     <>
       {/* Backdrop overlay - click to close */}
@@ -59,9 +67,12 @@ export function ChatPanel({
       )}
       
       <div 
-        className={`fixed right-0 top-0 bottom-0 w-80 max-w-[85vw] bg-black/40 backdrop-blur-md border-l border-white/10 flex flex-col z-50 transition-transform duration-300 ${
-          isOpen ? 'translate-x-0' : 'translate-x-full'
+        className={`fixed bg-black/40 backdrop-blur-md flex flex-col z-50 transition-transform duration-300 ${
+          isBottomSheet 
+            ? `left-0 right-0 bottom-0 border-t border-white/10 rounded-t-3xl pb-[env(safe-area-inset-bottom)] ${isOpen ? 'translate-y-0' : 'translate-y-full'}` 
+            : `right-0 top-0 bottom-0 w-80 max-w-[85vw] border-l border-white/10 ${isOpen ? 'translate-x-0' : 'translate-x-full'}`
         }`}
+        style={isBottomSheet ? { height: isOpen ? height : '0' } : undefined}
       >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/40">

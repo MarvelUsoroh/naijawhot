@@ -17,6 +17,10 @@ const cleanupHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-client-info, apikey, x-region',
+  // Cache preflight to reduce repeated OPTIONS overhead.
+  // Browsers may cap this value.
+  'Access-Control-Max-Age': '600',
+  'Vary': 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers',
   'Content-Type': 'application/json'
 };
 

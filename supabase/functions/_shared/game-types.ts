@@ -54,7 +54,8 @@ export interface GameState {
   pickTwoChain: number; // Number of consecutive Pick Two cards played
   pickThreeChain: number; // Number of consecutive Pick Three cards played
   effectActive: 'pick_two' | 'pick_three' | 'suspension' | 'general_market' | null;
-  // Specific tracking for General Market
+  // Specific tracking for effects
+  pickEffectInitiator?: string; // Player ID who played Pick Two/Three (to prevent applying to them)
   generalMarketInitiator?: string; // Player ID who played the 14
   marketDue?: string[]; // List of Player IDs who need to draw
   // GAME MASTER ARCHITECTURE: Server-managed deck and hands

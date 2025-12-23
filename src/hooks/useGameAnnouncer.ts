@@ -14,7 +14,7 @@ interface UseGameAnnouncerOptions {
  * Handles power card announcements, winner celebrations, and last card warnings
  */
 export function useGameAnnouncer({ gameState, isMuted }: UseGameAnnouncerOptions) {
-  const { play, preload, isPlaying, error } = useYarnGPT(!isMuted);
+  const { play, preload, prefetch, isPlaying, error } = useYarnGPT(!isMuted);
   
   const lastAnnouncedCard = useRef<string | null>(null);
   const lastAnnouncedWinner = useRef<string | null>(null);
@@ -114,7 +114,7 @@ export function useGameAnnouncer({ gameState, isMuted }: UseGameAnnouncerOptions
     // Check for pending "Continue" announcement
     if (pendingContinue.current && !winner) {
       if (!isPowerCard) {
-        setTimeout(() => play('Continue!'), 1500);
+        play('Continue!');
       }
     }
     pendingContinue.current = false;
@@ -172,21 +172,16 @@ export function useGameAnnouncer({ gameState, isMuted }: UseGameAnnouncerOptions
     
     if (!actionKey || lastAnnouncedAction.current === actionKey) return;
     lastAnnouncedAction.current = actionKey;
-    
-    let timeoutId: number | undefined;
 
     if (action.includes('last card')) {
-      timeoutId = window.setTimeout(() => play('Last Card oo!'), 2500);
+      play('Last Card oo!');
     } else if (action.includes('warning') && action.includes('two cards')) {
-      timeoutId = window.setTimeout(() => play('Warning! Two cards left!'), 2500);
+      play('Warning! Two cards left!');
     }
-
-    return () => { if (timeoutId) window.clearTimeout(timeoutId); };
   }, [gameState?.lastAction, gameState?.winner, isMuted, play]);
 
   // Announce winner with confetti (pidgin style)
   useEffect(() => {
-    if (isMuted) return;
     const winnerId = gameState?.winner;
     if (!winnerId || winnerId === lastAnnouncedWinner.current) return;
     lastAnnouncedWinner.current = winnerId;
@@ -201,12 +196,7 @@ export function useGameAnnouncer({ gameState, isMuted }: UseGameAnnouncerOptions
       ? `${winnerName} don win again oo!`
       : `${winnerName} don win oo!`;
     
-    play(winPhrase);
-
-    // Play applause and confetti immediately
-    const applauseAudio = new Audio('/sounds/applause.mp3');
-    applauseAudio.play().catch(() => {});
-
+    // Fire confetti immediately for instant visual feedback (always, regardless of mute)
     const fireConfetti = () => {
       const defaults = { 
         disableForReducedMotion: true, 
@@ -219,15 +209,48 @@ export function useGameAnnouncer({ gameState, isMuted }: UseGameAnnouncerOptions
       confetti({ ...defaults, particleCount: 40, angle: 120, spread: 50, origin: { x: 1, y: 0.8 } });
     };
 
+    // Start confetti immediately
     fireConfetti();
     const intervalId = window.setInterval(fireConfetti, 600);
-    const cleanupId = window.setTimeout(() => window.clearInterval(intervalId), 1200);
+    const stopConfettiTimer = window.setTimeout(() => {
+      if (intervalId) window.clearInterval(intervalId);
+    }, 1800); // Run confetti for 1.8 seconds total
+
+    // Audio announcements (only if not muted)
+    let winnerPhraseTimer: number | undefined;
+    let applauseTimer: number | undefined;
+    
+    if (!isMuted) {
+      // Speak "Check Up!" immediately
+      play('Check Up!');
+      
+      // Then winner phrase
+      winnerPhraseTimer = window.setTimeout(() => {
+        play(winPhrase);
+      }, 400);
+
+      // Then applause
+      applauseTimer = window.setTimeout(() => {
+        const applauseAudio = new Audio('/sounds/applause.mp3');
+        applauseAudio.play().catch(() => {});
+      }, 700);
+    }
 
     return () => {
-      window.clearInterval(intervalId);
-      window.clearTimeout(cleanupId);
+      if (winnerPhraseTimer) window.clearTimeout(winnerPhraseTimer);
+      if (applauseTimer) window.clearTimeout(applauseTimer);
+      if (intervalId) window.clearInterval(intervalId);
+      if (stopConfettiTimer) window.clearTimeout(stopConfettiTimer);
     };
-  }, [isMuted, gameState?.winner, gameState?.players, gameState?.sessionWins, play]);
+    // Intentionally do NOT depend on players/sessionWins; those can update after winner
+    // and would cancel the pending celebration timers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMuted, gameState?.winner, play]);
 
-  return { isPlaying, error };
+  const prefetchPhrase = (text: string) => {
+    if (isMuted) return;
+    void prefetch(text);
+  };
+
+  return { isPlaying, error, prefetchPhrase };
 }
