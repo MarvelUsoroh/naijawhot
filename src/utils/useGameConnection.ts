@@ -160,7 +160,7 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     // It's safer to use `fetch` with the session token.
     
     const token = accessTokenRef.current; // Avoid per-request session lookup
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
     const functionRegion = import.meta.env.VITE_SUPABASE_FUNCTION_REGION as string | undefined;
     
     // Construct base URL
@@ -168,19 +168,49 @@ export function useGameConnection(roomCode: string | null, onMessage?: (msg: Gam
     const functionBaseUrl = `${projectUrl}/functions/v1/whot-server${endpoint}`;
     // Supabase docs: when you can't add an `x-region` header (e.g. CORS), use `forceFunctionRegion`.
     // Using a query param also avoids introducing an extra custom header.
-    const functionUrl = functionRegion
+    let functionUrl = functionRegion
       ? `${functionBaseUrl}${functionBaseUrl.includes('?') ? '&' : '?'}forceFunctionRegion=${encodeURIComponent(functionRegion)}`
       : functionBaseUrl;
 
-     const headers: Record<string, string> = {
-       'Content-Type': 'application/json',
-       'Authorization': `Bearer ${token || anonKey}`, // Use session token if available, else anon
+    const isLikelyJwt = (value: string | null | undefined) =>
+      typeof value === 'string' && value.startsWith('eyJ');
+
+    const normalizeString = (value: unknown) =>
+      typeof value === 'string' ? value.trim() : value;
+
+    const normalizedBody: Record<string, unknown> = {
+      ...body,
+      roomCode: normalizeString(body.roomCode),
+      playerId: normalizeString(body.playerId),
+      playerName: normalizeString(body.playerName),
     };
+
+    const roomForLogs = typeof normalizedBody.roomCode === 'string' ? normalizedBody.roomCode : null;
+    if (roomForLogs) {
+      const sep = functionUrl.includes('?') ? '&' : '?';
+      functionUrl = `${functionUrl}${sep}room=${encodeURIComponent(roomForLogs)}`;
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      // Supabase API gateway expects an API key header even for Edge Functions.
+      apikey: anonKey,
+    };
+
+    // Authorization rules:
+    // - If signed in: send the user access token.
+    // - If not signed in: only send anon key as Bearer if it's a legacy JWT anon key.
+    //   (Publishable keys are not JWTs and should not be used as Authorization Bearer.)
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else if (isLikelyJwt(anonKey)) {
+      headers.Authorization = `Bearer ${anonKey}`;
+    }
 
     const response = await fetch(functionUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(normalizedBody)
     });
 
     if (!response.ok) {

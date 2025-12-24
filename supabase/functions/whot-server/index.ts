@@ -1,11 +1,22 @@
-import { Hono } from "npm:hono";
-import { cors } from "npm:hono/cors";
+import { Hono } from "npm:hono@3.11.0";
+import { cors } from "npm:hono@3.11.0/cors";
+import type { Context } from "npm:hono@3.11.0";
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import type { GameState, Card, GameRules } from "../_shared/game-types.ts";
 
 // Production build: 2025-12-23 - Phase 1 (RPC + Full State Updates)
 
 const app = new Hono();
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
 
 // Explicit CORS Config
 app.use("*", cors({
@@ -15,7 +26,7 @@ app.use("*", cors({
 }));
 
 // Explicit preflight handler (should be fast)
-app.options("*", (c) => {
+app.options("*", (c: Context) => {
   c.header('Access-Control-Allow-Origin', '*');
   c.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-client-info, apikey, x-region');
@@ -58,6 +69,8 @@ async function getSupabase(): Promise<SupabaseClient> {
 // HELPER FUNCTIONS
 // ==========================================
 
+const STRICT_PERSIST = (Deno.env.get("WHOT_STRICT_PERSIST") ?? "true").toLowerCase() === "true";
+
 async function getGameState(roomCode: string): Promise<GameState | null> {
   const supabase = await getSupabase();
   
@@ -66,7 +79,27 @@ async function getGameState(roomCode: string): Promise<GameState | null> {
     p_room_code: roomCode
   });
   
-  if (error || !data) return null;
+  if (error) {
+    // Don't collapse transient DB/RPC errors into "Game not found".
+    console.error("getGameState RPC error:", { roomCode, error });
+
+    // Fallback: direct table read (helps if RPC is missing/broken or transiently failing)
+    const { data: row, error: selectError } = await supabase
+      .from("rooms")
+      .select("game_state")
+      .eq("room_code", roomCode)
+      .maybeSingle();
+
+    if (selectError) {
+      console.error("getGameState fallback select error:", { roomCode, error: selectError });
+      throw selectError;
+    }
+
+    if (!row?.game_state) return null;
+    return row.game_state as GameState;
+  }
+
+  if (!data) return null;
   return data as GameState;
 }
 
@@ -100,8 +133,7 @@ async function saveGameState(roomCode: string, state: GameState, forceWrite = fa
   if (shouldWrite) {
     const { error } = await supabase
       .from("rooms")
-      .upsert({ room_code: roomCode, game_state: state })
-      .select();
+      .upsert({ room_code: roomCode, game_state: state });
     
     if (error) throw error;
     
@@ -157,8 +189,8 @@ setInterval(async () => {
           lastWrite: Date.now(),
           pendingWrite: false
         });
-      } catch (e) {
-        console.error(`Background flush failed for room ${roomCode}:`, e);
+      } catch (e: unknown) {
+        console.error(`Background flush failed for room ${roomCode}:`, toErrorMessage(e));
       }
     }
   }
@@ -193,7 +225,7 @@ async function getOrCreateSession(roomCode: string): Promise<string | null> {
     }
     return newSession.id;
   } catch (e) {
-    console.error("Analytics: Session error", e);
+    console.error("Analytics: Session error", toErrorMessage(e));
     return null;
   }
 }
@@ -222,8 +254,8 @@ function logPlayerEvent(
     .then(({ error }) => {
       if (error) console.error("Analytics: Event log failed", error);
     })
-    .catch((e) => {
-      console.error("Analytics: Event log failed", e);
+    .catch((e: unknown) => {
+      console.error("Analytics: Event log failed", toErrorMessage(e));
     });
 }
 
@@ -240,8 +272,8 @@ function updateSession(roomCode: string, updates: Record<string, any>) {
     .then(({ error }) => {
       if (error) console.error("Analytics: Session update failed", error);
     })
-    .catch((e) => {
-      console.error("Analytics: Session update failed", e);
+    .catch((e: unknown) => {
+      console.error("Analytics: Session update failed", toErrorMessage(e));
     });
 }
 
@@ -249,7 +281,7 @@ function updateSession(roomCode: string, updates: Record<string, any>) {
 // ROUTES (Using wildcard prefix for flexibility)
 // ==========================================
 
-app.post("*/game/start", async (c) => {
+app.post("*/game/start", async (c: Context) => {
   try {
     const { roomCode, players, rules } = await c.req.json();
     
@@ -302,11 +334,11 @@ app.post("*/game/start", async (c) => {
     return c.json({ success: true, state: initialState });
   } catch (error) {
     console.error("Start error:", error);
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: toErrorMessage(error) }, 500);
   }
 });
 
-app.post("*/game/get-state", async (c) => {
+app.post("*/game/get-state", async (c: Context) => {
   try {
     const { roomCode } = await c.req.json();
 
@@ -324,11 +356,11 @@ app.post("*/game/get-state", async (c) => {
     });
   } catch (error) {
     console.error("Get-state error:", error);
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: toErrorMessage(error) }, 500);
   }
 });
 
-app.post("*/game/play-card", async (c) => {
+app.post("*/game/play-card", async (c: Context) => {
   try {
     const { roomCode, playerId, card, selectedShape } = await c.req.json();
     
@@ -492,18 +524,23 @@ app.post("*/game/play-card", async (c) => {
       shape: selectedShape 
     });
 
-    // Parallelize Save and Broadcast for lower latency
+    // Prepare public state (never leak hands)
     const publicState = {
         ...updatedState,
         playerHands: {}, // Security: Don't leak hands
         marketPile: [],
     };
 
-    // Parallelize save and broadcast
-    const shouldForceWrite = updatedState.winner !== null;
+    // Correctness-first: ensure DB reflects the move before broadcasting.
+    // This avoids cross-instance read-after-write gaps that produce false "Not your turn".
+    const mustPersistNow = STRICT_PERSIST || updatedState.winner !== null;
+    if (mustPersistNow) {
+      await saveGameState(roomCode, updatedState, true);
+    } else {
+      await saveGameState(roomCode, updatedState, false);
+    }
 
-    const savePromise = saveGameState(roomCode, updatedState, shouldForceWrite);
-    const broadcastPromise = broadcast(roomCode, "game-message", {
+    await broadcast(roomCode, "game-message", {
       type: "card_played",
       playerId,
       card: card,
@@ -511,30 +548,16 @@ app.post("*/game/play-card", async (c) => {
       gameState: publicState
     });
 
-    // All operations in parallel
-    const [saveResult, broadcastResult] = await Promise.allSettled([
-      savePromise, 
-      broadcastPromise
-    ]);
-    
-    // Check for critical failures
-    if (saveResult.status === 'rejected' && shouldForceWrite) {
-      throw saveResult.reason; // Critical events must save
-    }
-    if (broadcastResult.status === 'rejected') {
-      throw broadcastResult.reason; // Broadcast is critical
-    }
-
     return c.json({ success: true, state: publicState });
 
   } catch (error) {
     console.error("Play error:", error);
-    return c.json({ error: error.message }, 500);
+    return c.json({ error: toErrorMessage(error) }, 500);
   }
 });
 
 // Event: Player Ready for Next Game
-app.post("*/game/ready", async (c) => {
+app.post("*/game/ready", async (c: Context) => {
     try {
       const { roomCode, playerId } = await c.req.json();
       const state = await getGameState(roomCode);
@@ -559,12 +582,12 @@ app.post("*/game/ready", async (c) => {
           });
       }
       return c.json({ success: true });
-    } catch (e: any) {
-        return c.json({ error: e.message }, 500);
+      } catch (e: unknown) {
+        return c.json({ error: toErrorMessage(e) }, 500);
     }
 });
 
-app.post("*/game/draw", async (c) => {
+    app.post("*/game/draw", async (c: Context) => {
     try {
       const { roomCode, playerId } = await c.req.json();
 
@@ -659,28 +682,30 @@ app.post("*/game/draw", async (c) => {
       // Update turn start time for next player
       state.turnStartTime = Date.now(); 
   
-      // Parallelize Save and Broadcasts
-      const isGameEnd = state.winner !== null;
-      const savePromise = saveGameState(roomCode, state, isGameEnd);
+      // Correctness-first: persist state before broadcasting so other instances read the latest.
+      const mustPersistNow = STRICT_PERSIST || state.winner !== null;
+      if (mustPersistNow) {
+        await saveGameState(roomCode, state, true);
+      } else {
+        await saveGameState(roomCode, state, false);
+      }
 
       // Broadcast private deal to player
-      const privateBroadcastPromise = broadcast(roomCode, "game-message", {
+      await broadcast(roomCode, "game-message", {
         type: "draw",
         playerId,
         count: drawnCards.length,
-        cards: drawnCards 
+        cards: drawnCards
       });
 
       // Broadcast public update
       const publicState = { ...state, playerHands: {}, marketPile: [] };
-      const publicBroadcastPromise = broadcast(roomCode, "game-message", {
-          type: "draw",
-          playerId: "server",
-          count: drawnCards.length,
-          gameState: publicState
+      await broadcast(roomCode, "game-message", {
+        type: "draw",
+        playerId: "server",
+        count: drawnCards.length,
+        gameState: publicState
       });
-
-      await Promise.allSettled([savePromise, privateBroadcastPromise, publicBroadcastPromise]);
       
       // Analytics: Log draw (fire-and-forget)
       logPlayerEvent(roomCode, playerId, state.players[playerIndex].name, 'draw', { 
@@ -689,11 +714,11 @@ app.post("*/game/draw", async (c) => {
   
       return c.json({ success: true, cards: drawnCards });
     } catch (error) {
-      return c.json({ error: error.message }, 500);
+      return c.json({ error: toErrorMessage(error) }, 500);
     }
 });
 
-app.post("*/game/get-hand", async (c) => {
+app.post("*/game/get-hand", async (c: Context) => {
     try {
         const { roomCode, playerId } = await c.req.json();
         const state = await getGameState(roomCode);
@@ -702,12 +727,12 @@ app.post("*/game/get-hand", async (c) => {
         const hand = state.playerHands[playerId] || [];
         return c.json({ hand });
     } catch(e) {
-        return c.json({error: e.message}, 500);
+      return c.json({error: toErrorMessage(e)}, 500);
     }
 });
 
 // Update game rules (only before first action)
-app.post("*/game/update-rules", async (c) => {
+app.post("*/game/update-rules", async (c: Context) => {
     try {
         const { roomCode, playerId, playerName, rules } = await c.req.json();
         const state = await getGameState(roomCode);
@@ -743,12 +768,12 @@ app.post("*/game/update-rules", async (c) => {
         
         return c.json({ success: true, rules: state.rules });
     } catch(e) {
-        return c.json({ error: e.message }, 500);
+      return c.json({ error: toErrorMessage(e) }, 500);
     }
 });
 
 // Auto-play endpoint (called when timer expires)
-app.post("*/game/auto-play", async (c) => {
+app.post("*/game/auto-play", async (c: Context) => {
     try {
         const { roomCode, playerId } = await c.req.json();
         const state = await getGameState(roomCode);
@@ -926,13 +951,13 @@ app.post("*/game/auto-play", async (c) => {
             return c.json({ success: true, action: 'draw', count: 1 });
         }
     } catch(e) {
-        console.error("Auto-play error:", e);
-        return c.json({ error: e.message }, 500);
+      console.error("Auto-play error:", e);
+      return c.json({ error: toErrorMessage(e) }, 500);
     }
 });
 
 // Health check endpoint (keep function warm)
-app.get("*/health", (c) => {
+app.get("*/health", (c: Context) => {
   return c.json({ 
     status: "ok", 
     timestamp: Date.now(),

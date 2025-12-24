@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint src",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:stress": "vitest run tests/stress/max-concurrency.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",
